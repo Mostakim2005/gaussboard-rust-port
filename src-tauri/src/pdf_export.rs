@@ -61,7 +61,7 @@ pub async fn print_webview_to_pdf_bytes<R: Runtime>(
                 let handler = PrintToPdfCompletedHandler::create(Box::new(
                     move |hr, is_success| {
                         if let Some(sender) = tx_opt.take() {
-                            if hr.is_ok() && is_success.as_bool() {
+                            if hr.is_ok() && is_success {
                                 let _ = sender.send(Ok(()));
                             } else {
                                 let _ = sender.send(Err(format!(
