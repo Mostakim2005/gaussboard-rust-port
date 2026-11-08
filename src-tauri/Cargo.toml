@@ -15,6 +15,8 @@ tauri = { version = "2.1", features = ["protocol-asset", "devtools"] }
 tauri-plugin-dialog = "2.0"
 tauri-plugin-shell = "2.0"
 tauri-plugin-clipboard-manager = "2.0"
+tauri-plugin-notification = "2.2"
+tauri-plugin-os = "2.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.40", features = ["full"] }
@@ -37,11 +39,33 @@ url = "2.5"
 mime_guess = "2.0"
 percent-encoding = "2.3"
 hostname = "0.4"
+walkdir = "2.5"
+
+# Native Archive & Streaming Compression
+zip = { version = "2.2", default-features = false, features = ["deflate-flate2", "zstd"] }
+flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
+
+# Embedded Search & Knowledge Graph Engine
+rusqlite = { version = "0.32", features = ["bundled", "bundled-full"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.25"
+
+# Fast Audio Duration & Metadata
+symphonia = { version = "0.5.4", features = ["all"] }
+
+# Stroke Geometry & Curve Fitting
+kurbo = { version = "0.11", features = ["serde"] }
+
+# Desktop-only plugins
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2.2"
+tauri-plugin-global-shortcut = "2.2"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
     "Win32_System_Com",
     "Win32_UI_WindowsAndMessaging",
-    "Win32_Foundation"
+    "Win32_Foundation",
+    "Win32_System_Power"
 ] }
 webview2-com = "0.39"

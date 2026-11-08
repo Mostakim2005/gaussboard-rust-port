@@ -1,12 +1,17 @@
 // src-tauri/src/lib.rs
 pub mod assets;
+pub mod audio_inspect;
+pub mod bundle;
 pub mod clipboard;
 pub mod converter;
+pub mod geometry;
 pub mod lan_sync;
 pub mod lease;
 pub mod pdf_export;
+pub mod power;
 pub mod protocol_app;
 pub mod recording;
+pub mod search;
 pub mod splash;
 pub mod state;
 pub mod storage;
@@ -14,7 +19,7 @@ pub mod storage;
 use crate::{lan_sync::LanSyncManager, state::AppState};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, Runtime, State, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State, WindowEvent};
 use tauri_plugin_shell::ShellExt;
 use url::Url;
 
@@ -78,10 +83,49 @@ fn updates_note() -> Value {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+                let _ = window.emit("app:external-open", argv);
+            }
+        }));
+    }
+
+    builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_os::init());
+
+    #[cfg(desktop)]
+    {
+        if let Ok(shortcut_plugin) = tauri_plugin_global_shortcut::Builder::new()
+            .with_shortcuts(["Ctrl+Shift+Space", "Alt+G"])
+            .and_then(|b| {
+                Ok(b.with_handler(|app, _shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                            let _ = w.emit("app:quick-scratchpad", ());
+                        }
+                    }
+                })
+                .build())
+            })
+        {
+            builder = builder.plugin(shortcut_plugin);
+        }
+    }
+
+    builder
         .register_uri_scheme_protocol("app", protocol_app::handle_app_protocol)
         .setup(|app| {
             let user_data_dir = app
@@ -94,10 +138,18 @@ pub fn run() {
                 .unwrap_or_else(|_| user_data_dir.clone());
 
             let app_state = AppState::new(user_data_dir.clone(), doc_dir);
-            let sync_mgr = LanSyncManager::new(user_data_dir);
+            let sync_mgr = LanSyncManager::new(user_data_dir.clone());
+
+            let db_pool = search::init_search_db(user_data_dir)
+                .unwrap_or_else(|e| {
+                    eprintln!("Warning: failed to init search db: {}", e);
+                    search::init_search_db(std::env::temp_dir().join("GaussBoardSearch"))
+                        .expect("Failed to initialize fallback search db")
+                });
 
             app.manage(app_state.clone());
             app.manage(sync_mgr);
+            app.manage(db_pool);
 
             splash::init_splash_bypass_and_watchdog(app.handle());
             Ok(())
@@ -171,6 +223,18 @@ pub fn run() {
             clipboard::clipboard_signature,
             converter::import_to_pdf,
             pdf_export::export_pdf,
+            bundle::bundle_export,
+            bundle::bundle_import,
+            audio_inspect::audio_inspect,
+            geometry::stroke_simplify_and_fit,
+            search::search_index_board,
+            search::search_delete_board,
+            search::search_boards,
+            search::graph_record_links,
+            search::graph_get_backlinks,
+            search::study_card_upsert,
+            search::study_cards_due,
+            power::get_power_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running GaussBoard Tauri application");

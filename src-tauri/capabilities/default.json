@@ -12,6 +12,9 @@
     "core:default",
     "dialog:default",
     "shell:default",
-    "clipboard-manager:default"
+    "clipboard-manager:default",
+    "notification:default",
+    "os:default",
+    "global-shortcut:default"
   ]
 }

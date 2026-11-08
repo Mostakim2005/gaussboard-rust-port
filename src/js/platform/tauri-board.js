@@ -150,6 +150,43 @@
 
     setLanguage: (code) => invoke('app_set_language', { code }),
     startupStep: (text) => invoke('app_startup_step', { text }),
-    startupDone: (info) => invoke('app_startup_done', { info: info || {} })
+    startupDone: (info) => invoke('app_startup_done', { info: info || {} }),
+
+    archive: {
+      exportBundle: (sourceDir, destZipPath, useZstd) =>
+        invoke('bundle_export', { sourceDir, destZipPath, useZstd: !!useZstd }),
+      importBundle: (archivePath, targetDir) =>
+        invoke('bundle_import', { archivePath, targetDir })
+    },
+
+    audioInspect: {
+      inspect: (filePath) => invoke('audio_inspect', { filePath })
+    },
+
+    geometry: {
+      fitStroke: (points, epsilon) =>
+        invoke('stroke_simplify_and_fit', { points, epsilon: typeof epsilon === 'number' ? epsilon : null })
+    },
+
+    search: {
+      indexBoard: (boardId, title, content, tags) =>
+        invoke('search_index_board', { boardId, title, content, tags: tags || null }),
+      deleteBoard: (boardId) =>
+        invoke('search_delete_board', { boardId }),
+      query: (query, limit) =>
+        invoke('search_boards', { query, limit: typeof limit === 'number' ? limit : null }),
+      recordLinks: (boardId, boardTitle, links) =>
+        invoke('graph_record_links', { boardId, boardTitle, links: Array.isArray(links) ? links : [] }),
+      getBacklinks: (boardId) =>
+        invoke('graph_get_backlinks', { boardId }),
+      upsertCard: (cardId, boardId, prompt, dueTimestamp) =>
+        invoke('study_card_upsert', { cardId, boardId, prompt, dueTimestamp: Number(dueTimestamp) }),
+      getDueCards: (nowTimestamp, limit) =>
+        invoke('study_cards_due', { nowTimestamp: Number(nowTimestamp), limit: typeof limit === 'number' ? limit : null })
+    },
+
+    power: {
+      getStatus: () => invoke('get_power_status')
+    }
   };
 })();
