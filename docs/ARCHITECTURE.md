@@ -20,7 +20,7 @@ flowchart TB
     Surface --> Study[Study Tape + Covers]
     Import[Importers: PDF, PPTX, OOXML, mammoth] --> Store
     ElectronMain[Electron Main: Window, IPC, Conversion, Storage] --> Store
-    Store --> Boards[(Boards Folder: boards/*.gazboard + assets/)]
+    Store --> Boards[(Boards Folder: boards/*.gaussboard + assets/)]
     PWA[PWA: Service Worker + Web Adapter] --> Store
 ```
 
