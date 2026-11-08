@@ -50,14 +50,14 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Install Tauri CLI
-        run: npm install @tauri-apps/cli@latest
+      - name: Install Tauri CLI globally
+        run: npm install -g @tauri-apps/cli@latest
 
       - name: Initialize Tauri Android project
-        run: npx tauri android init
+        run: tauri android init
 
       - name: Build Tauri Android APK
-        run: npx tauri android build --apk --target aarch64
+        run: tauri android build --apk --target aarch64
 
       - name: Upload Android APK Artifacts
         uses: actions/upload-artifact@v4
