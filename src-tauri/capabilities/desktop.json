@@ -6,7 +6,9 @@
     "main"
   ],
   "platforms": [
-    "desktop"
+    "windows",
+    "linux",
+    "macOS"
   ],
   "permissions": [
     "global-shortcut:default"

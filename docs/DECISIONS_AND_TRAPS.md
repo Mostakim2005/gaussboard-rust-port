@@ -357,3 +357,26 @@ flowchart LR
 * **Protected Code Anchors (Grep Targets):**
   * `package.json` -> `"tauri": "tauri"`
   * `.github/workflows/tauri-android.yml` -> `npm run tauri android init`
+
+
+### [TRAP: Tauri-Mobile-Platform-Capability-Isolation] | Aliases: desktop.json, global-shortcut:default, Permission not found
+> **1-Line Summary:** Desktop-only Tauri plugins must have their capability permissions isolated in a separate capability JSON with `platforms: ["desktop"]` so mobile build tools (`tauri-build` on Android) do not fail with missing permission schema errors.
+* **Strict Rule:** **NEVER** put desktop-only permissions (such as `global-shortcut:default` or `single-instance`) in `src-tauri/capabilities/default.json` without platform filtering.
+* **Why This Trap Exists (Plain English):** Tauri v2 validates all declared capability permissions at compile time against registered plugins. If `default.json` requests `global-shortcut:default` on an Android target, `tauri-build` throws a fatal error because the global shortcut plugin is only compiled for desktop targets. Isolating desktop-only permissions in `capabilities/desktop.json` with `"platforms": ["desktop"]` ensures that Android builds only evaluate cross-platform permissions.
+* **Protected Code Anchors (Grep Targets):**
+  * `src-tauri/capabilities/desktop.json` -> `"platforms": ["desktop"]`
+  * `src-tauri/capabilities/default.json` -> `"permissions"`
+
+### [TRAP: ZipWriter-Writer-Trait-Bounds-And-Verification] | Aliases: ZipWriter, Seek trait, HashingWriter, bundle_export
+> **1-Line Summary:** ZipWriter requires `W: Write + Seek`; custom stream wrappers without complete seek implementations must not wrap the archive writer, and verification hashes must be computed from the finalized archive file.
+* **Strict Rule:** Pass `BufWriter<File>` directly to `ZipWriter::new(buf_writer)`, call `zip.finish()?.into_inner()?.flush()`, and compute SHA-256 and byte sizes by streaming the completed archive from disk.
+* **Why This Trap Exists (Plain English):** The ZIP format writes local file entries and then seeks backwards to patch header sizes and write the central directory table at the end of the file. A non-seeking or linear streaming hashing wrapper violates `ZipWriter`'s `Seek` trait bound, and hashing during seeks corrupts the cryptographic digest. Streaming the completed archive on disk guarantees 100% cryptographic accuracy.
+* **Protected Code Anchors (Grep Targets):**
+  * `src-tauri/src/bundle.rs` -> `ZipWriter::new(buf_writer)`, `check_file`
+
+### [TRAP: Kurbo-BezPath-Arc-Length-Decomposition] | Aliases: BezPath, arclen, ParamCurveArclen, kurbo
+> **1-Line Summary:** `kurbo::BezPath` is a sequence of path commands rather than a continuous curve; arc length must be computed by iterating over path segments with `ParamCurveArclen`.
+* **Strict Rule:** Use `use kurbo::ParamCurveArclen;` and compute total path length via `bez_path.segments().map(|seg| seg.arclen(tolerance)).sum::<f64>()`.
+* **Why This Trap Exists (Plain English):** `BezPath` does not implement `ParamCurveArclen` directly because paths can contain discontinuities (`MoveTo`) and mixed segment types (lines, quadratic Béziers, and cubic Béziers). Calling `.arclen()` directly on `BezPath` results in compiler error `E0599`. Iterating over `.segments()` handles every segment type analytically.
+* **Protected Code Anchors (Grep Targets):**
+  * `src-tauri/src/geometry.rs` -> `ParamCurveArclen`, `bez_path.segments()`
