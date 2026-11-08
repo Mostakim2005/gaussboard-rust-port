@@ -5,10 +5,9 @@ pub mod protocol;
 
 use crate::{
     lan_sync::{
-        discovery::{collect_local_ipv4_and_broadcasts, DiscoveryPacket, PEER_FORGOTTEN_AFTER_MS},
+        discovery::{DiscoveryPacket, PEER_FORGOTTEN_AFTER_MS},
         protocol::*,
     },
-    state::AppState,
     storage::atomic_write_bytes,
 };
 use axum::{
@@ -25,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
-    net::{IpAddr, SocketAddr},
+    net::IpAddr,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU16, Ordering},
@@ -33,7 +32,7 @@ use std::{
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Emitter, Manager, Runtime, State};
+use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::oneshot;
 use x25519_dalek::StaticSecret;
 
@@ -226,10 +225,18 @@ impl LanSyncManager {
     }
 }
 
-#[derive(Clone)]
 struct HttpServerContext<R: Runtime> {
     app: AppHandle<R>,
     mgr: Arc<LanSyncManager>,
+}
+
+impl<R: Runtime> Clone for HttpServerContext<R> {
+    fn clone(&self) -> Self {
+        Self {
+            app: self.app.clone(),
+            mgr: Arc::clone(&self.mgr),
+        }
+    }
 }
 
 fn json_no_store<T: Serialize>(status: StatusCode, body: T) -> Response {

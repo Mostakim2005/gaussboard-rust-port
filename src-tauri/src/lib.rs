@@ -37,6 +37,7 @@ fn app_set_language(state: State<'_, Arc<AppState>>, code: String) -> bool {
 }
 
 #[tauri::command]
+#[allow(deprecated)]
 async fn shell_open_external<R: Runtime>(app: AppHandle<R>, url: String) -> Result<bool, String> {
     let parsed = Url::parse(&url).map_err(|_| "Invalid URL".to_string())?;
     if parsed.scheme() != "https" {

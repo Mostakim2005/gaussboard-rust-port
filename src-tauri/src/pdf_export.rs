@@ -4,7 +4,7 @@ use std::{
     fs,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tokio::sync::oneshot;
 
 #[cfg(target_os = "windows")]
@@ -19,7 +19,7 @@ pub async fn print_webview_to_pdf_bytes<R: Runtime>(
         },
         PrintToPdfCompletedHandler,
     };
-    use windows::core::{Interface, HSTRING, PWSTR};
+    use windows::core::{Interface, HSTRING, PCWSTR};
 
     let tmp_pdf = std::env::temp_dir().join(format!(
         "gaussboard-print-{}.pdf",
@@ -61,11 +61,11 @@ pub async fn print_webview_to_pdf_bytes<R: Runtime>(
                 let handler = PrintToPdfCompletedHandler::create(Box::new(
                     move |hr, is_success| {
                         if let Some(sender) = tx_opt.take() {
-                            if hr.is_ok() && is_success {
+                            if hr.is_ok() && is_success.as_bool() {
                                 let _ = sender.send(Ok(()));
                             } else {
                                 let _ = sender.send(Err(format!(
-                                    "PrintToPdfAsync failed: {:?}",
+                                    "PrintToPdf failed: {:?}",
                                     hr
                                 )));
                             }
@@ -75,8 +75,8 @@ pub async fn print_webview_to_pdf_bytes<R: Runtime>(
                 ));
 
                 core7
-                    .PrintToPdfAsync(
-                        PWSTR(path_hstring.as_ptr() as *mut _),
+                    .PrintToPdf(
+                        PCWSTR::from_raw(path_hstring.as_ptr()),
                         settings_opt.as_ref(),
                         &handler,
                     )
@@ -86,8 +86,8 @@ pub async fn print_webview_to_pdf_bytes<R: Runtime>(
         })();
 
         if let Err(err) = result {
-            // Handler was never registered if PrintToPdfAsync failed synchronously
-            eprintln!("WebView2 PrintToPdfAsync setup error: {}", err);
+            // Handler was never registered if PrintToPdf failed synchronously
+            eprintln!("WebView2 PrintToPdf setup error: {}", err);
         }
     })
     .map_err(|e| e.to_string())?;

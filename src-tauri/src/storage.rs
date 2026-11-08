@@ -1,6 +1,6 @@
 // src-tauri/src/storage.rs
 use crate::state::{AppState, BoardIndexEntry, BoardMeta, LastBoardConfig, StorageLocationConfig};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     collections::HashSet,

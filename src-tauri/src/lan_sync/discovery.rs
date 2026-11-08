@@ -1,5 +1,5 @@
 // src-tauri/src/lan_sync/discovery.rs
-use crate::lan_sync::{DiscoveredPeer, LanSyncManager};
+use crate::lan_sync::LanSyncManager;
 use if_addrs::{get_if_addrs, IfAddr};
 use serde::{Deserialize, Serialize};
 use socket2::{Domain, Protocol, Socket, Type};

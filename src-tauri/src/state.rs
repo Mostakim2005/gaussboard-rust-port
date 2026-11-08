@@ -5,7 +5,7 @@ use std::{
     collections::HashMap,
     fs::File,
     io::BufWriter,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
 };
 use sha2::Sha256;

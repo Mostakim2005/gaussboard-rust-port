@@ -139,7 +139,7 @@ pub fn generate_confirmation(
     if clean_code.is_empty() {
         return Err("Empty pairing code".into());
     }
-    let mut mac = Hmac::<Sha256>::new_from_slice(clean_code.as_bytes())
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(clean_code.as_bytes())
         .map_err(|e| e.to_string())?;
     mac.update(format!("{}\n{}", label, transcript).as_bytes());
     Ok(BASE64.encode(mac.finalize().into_bytes()))
