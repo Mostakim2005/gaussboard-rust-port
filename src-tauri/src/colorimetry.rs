@@ -1,7 +1,7 @@
 // src-tauri/src/colorimetry.rs
 use palette::{
     color_difference::Wcag21RelativeContrast,
-    FromColor, Mix, Oklch, Srgb,
+    Clamp, FromColor, Mix, Oklch, Srgb,
 };
 use serde::{Deserialize, Serialize};
 
