@@ -42,8 +42,7 @@ hostname = "0.4"
 walkdir = "2.5"
 
 # Native Archive & Streaming Compression
-zip = { version = "2.2", default-features = false, features = ["deflate-flate2", "zstd"] }
-flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
+zip = { version = "2.2", default-features = false, features = ["deflate", "zstd"] }
 
 # Embedded Search & Knowledge Graph Engine
 rusqlite = { version = "0.32", features = ["bundled", "bundled-full"] }
