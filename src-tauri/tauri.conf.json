@@ -35,5 +35,16 @@
     "security": {
       "csp": "default-src 'self' app: data: blob: 'unsafe-inline' 'unsafe-eval'; img-src 'self' app: data: blob:; media-src 'self' app: data: blob:; connect-src 'self' app: ipc: http://ipc.localhost"
     }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
   }
 }
