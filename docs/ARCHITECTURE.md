@@ -270,14 +270,17 @@ flowchart LR
   * `src-tauri/Cargo.toml` -> `[lib]`, `crate-type = ["staticlib", "cdylib", "rlib"]`
   * `src-tauri/src/lib.rs` -> `#[cfg_attr(mobile, tauri::mobile_entry_point)]`
 
-### [SUBSYSTEM: Rust-Native-Robustness-Suite] | Aliases: zip bundle, rusqlite FTS5, symphonia, kurbo, single-instance
-> **1-Line Summary:** Native Rust high-performance engine extensions integrating streaming multi-gigabyte ZIP archiving with SHA-256 validation, sub-millisecond SQLite FTS5 trigram search, pure-Rust audio duration inspection, kurbo Bezier curve fitting with timestamp preservation, and single-instance safety.
+### [SUBSYSTEM: Rust-Native-Robustness-Suite] | Aliases: zip bundle, rusqlite FTS5, symphonia, kurbo, colorimetry, markdown_parser, power, single-instance
+> **1-Line Summary:** Native Rust high-performance engine extensions integrating streaming multi-gigabyte ZIP archiving with SHA-256 validation, sub-millisecond SQLite FTS5 trigram search and PDF deep-indexing, pure-Rust audio duration inspection, kurbo Bezier curve fitting with timestamp preservation, WCAG 2.1 contrast checking, Oklch ink blending, CommonMark/KaTeX parser, and single-instance safety.
 * **How It Works (Plain English):** The Rust backend complements the Vanilla ES6 canvas with heavy lifting operations running in background threads:
   1. `bundle.rs` streams multi-gigabyte `.gaussboard` packages using `zip` and `flate2`/`zstd` in 64KB/128KB chunks with zero V8 heap memory bloat and ZipSlip security checks.
-  2. `search.rs` uses an embedded SQLite WAL database with trigram FTS5 (`board_fts`) to index math tokens (`\frac`, `\int`), text objects, and FSRS v5 card review schedules.
+  2. `search.rs` uses an embedded SQLite WAL database with trigram FTS5 (`board_fts`) to index math tokens (`\frac`, `\int`), text objects, FSRS v5 card review schedules, and extracts PDF page-by-page text via `pdf-extract`.
   3. `audio_inspect.rs` uses pure-Rust `symphonia` to probe audio files in <1ms without spinning up browser media elements, strictly satisfying TRAP 3.
   4. `geometry.rs` applies RDP simplification and Catmull-Rom to Cubic Bezier spline fitting via `kurbo`, strictly preserving stroke point timestamps `p.t` (TRAP 2).
-  5. `single-instance` and `global-shortcut` provide OS-level focus switching and quick scratchpad toggling.
+  5. `colorimetry.rs` performs WCAG 2.1 relative luminance and contrast verification (AA/AAA), perceptual ink blending in Oklch color space, and dark/light mode canvas ink inversion via `palette`.
+  6. `markdown_parser.rs` executes safe $O(N)$ CommonMark parsing via `pulldown-cmark` with support for GFM tables, footnotes, task lists, and KaTeX math blocks (`$...$`, `$$...$$`).
+  7. `power.rs` queries hardware battery level and AC status via Windows `GetSystemPowerStatus`.
+  8. `single-instance` and `global-shortcut` provide OS-level focus switching and quick scratchpad toggling.
 * **Data Flow Diagram:**
 ```mermaid
 flowchart TD
@@ -285,6 +288,8 @@ flowchart TD
         Canvas["Canvas Inking & Stroke Capture"]
         SearchUI["Quick Search & Graph Views"]
         AudioUI["Audio Recording Waveform"]
+        MarkdownUI["Markdown Cards & KaTeX Preview"]
+        PaletteUI["Ink Palette & Theme Switcher"]
     end
 
     subgraph IPC ["tauri-board.js Bridge"]
@@ -293,21 +298,28 @@ flowchart TD
 
     subgraph RustEngines ["Native Rust Robustness Engines"]
         ArchiveEng["bundle.rs (zip + flate2/zstd + SHA-256)"]
-        SearchEng["search.rs (rusqlite + trigram FTS5 + Graph)"]
+        SearchEng["search.rs (rusqlite + trigram FTS5 + PDF)"]
         AudioEng["audio_inspect.rs (symphonia duration/codec)"]
         GeomEng["geometry.rs (kurbo RDP + Bezier + AABB)"]
+        ColorEng["colorimetry.rs (palette Oklch + WCAG 2.1)"]
+        MdEng["markdown_parser.rs (pulldown-cmark + KaTeX)"]
         PowerEng["power.rs (Windows PowerStatus / Battery)"]
     end
 
     Canvas -->|stroke_simplify_and_fit| GeomEng
-    SearchUI -->|search_boards / backlinks| SearchEng
+    SearchUI -->|search_boards / index_pdf| SearchEng
     AudioUI -->|audio_inspect| AudioEng
+    MarkdownUI -->|markdown_to_html| MdEng
+    PaletteUI -->|color_contrast_check / oklch_blend| ColorEng
     Bridge --> ArchiveEng
     Bridge --> PowerEng
 ```
 * **Code Anchors (Grep Targets):**
-  * `src-tauri/src/bundle.rs` -> `bundle_export`, `bundle_import`, `HashingWriter`
-  * `src-tauri/src/search.rs` -> `init_search_db`, `search_boards`, `graph_record_links`
+  * `src-tauri/src/bundle.rs` -> `bundle_export`, `bundle_import`
+  * `src-tauri/src/search.rs` -> `init_search_db`, `search_boards`, `index_pdf_pages`
   * `src-tauri/src/audio_inspect.rs` -> `audio_inspect`, `symphonia`
   * `src-tauri/src/geometry.rs` -> `stroke_simplify_and_fit`, `simplify_rdp`
-  * `src/js/platform/tauri-board.js` -> `window.board.archive`, `window.board.search`, `window.board.geometry`
+  * `src-tauri/src/colorimetry.rs` -> `color_contrast_check`, `oklch_blend`, `invert_ink_colors`
+  * `src-tauri/src/markdown_parser.rs` -> `markdown_to_html`
+  * `src-tauri/src/power.rs` -> `get_power_status`
+  * `src/js/platform/tauri-board.js` -> `window.board.archive`, `window.board.search`, `window.board.geometry`, `window.board.colorimetry`, `window.board.markdown`

@@ -350,6 +350,39 @@ flowchart LR
   * `.github/workflows/tauri-android.yml` -> `npm run tauri android build`
   * `src-tauri/src/lib.rs` -> `mobile_entry_point`
 
+### [DECISION: Rust-Robustness-Suite-Extensible-Engines] | Aliases: bundle.rs, search.rs, audio_inspect.rs, geometry.rs, colorimetry.rs, markdown_parser.rs, power.rs
+> **1-Line Summary:** Offloaded heavy compute tasks (multi-gigabyte archive streaming, SQLite FTS5 trigram search, pure-Rust audio duration inspection, curve fitting, WCAG 2.1 contrast checking, Oklch ink blending, safe CommonMark parsing, and hardware power status) to modular native Rust subsystems while strictly preserving UI reactivity and invariant traps.
+* **Decision Maker:** `[DECIDED BY: AGENT - Approved by Human]`
+* **Original User Intention:** Make the GaussBoard Rust port significantly more robust and featureful by leveraging production-grade Rust crates and Tauri plugins, inspired by open-source note-taking ecosystems (Rnote, Obsidian, Xournal++), without compromising the verified `main` branch or core inking math.
+* **Options Considered:**
+  * **Option A (Rejected):** Execute heavy PDF text extraction, large board zip compression, trigram search, and colorimetric math directly in the single-threaded WebView JavaScript context. Rejected because large files cause noticeable UI frame drops, GC pauses, and memory bloat.
+  * **Option B (Chosen):** Dedicated native Rust modules compiled directly into the binary with zero C/C++ native dependencies:
+    * `bundle.rs`: Streaming multi-gigabyte ZIP compression/extraction with `zip` + `flate2`/`zstd` in 64KB/128KB chunks, ZipSlip prevention via `file.enclosed_name()`, and SHA-256 verification.
+    * `search.rs`: Embedded SQLite (`rusqlite` + `r2d2`) with WAL mode, trigram FTS5 (`board_fts`), knowledge graph backlinks, spaced repetition (FSRS v5) card review scheduling, and deep PDF text indexing via `pdf-extract`.
+    * `audio_inspect.rs`: Sub-millisecond pure-Rust audio duration and sample rate inspection via `symphonia` (satisfying TRAP 3).
+    * `geometry.rs`: Curve simplification (RDP) and Catmull-Rom cubic Bézier conversion via `kurbo`, strictly preserving stroke point timestamps `p.t` (TRAP 2).
+    * `colorimetry.rs`: WCAG 2.1 relative luminance and contrast checking (AA/AAA), Oklch perceptual ink blending, and dark/light mode canvas ink inversion via `palette`.
+    * `markdown_parser.rs`: $O(N)$ safe CommonMark parser via `pulldown-cmark` with GFM tables, footnotes, task lists, and KaTeX math blocks (`$...$`, `$$...$$`).
+    * `power.rs`: Hardware battery level and power-saver status via Win32 `GetSystemPowerStatus`.
+* **Visual Pivot Map (What Failed vs. What Works):**
+```mermaid
+flowchart LR
+    subgraph WebView["❌ Main JS Thread (Heavy Lifting)"]
+        J1["Large File ZIP / PDF Parse"] --> J2["V8 Heap Pressure & Frame Stutter"]
+    end
+    subgraph RustNative["✅ Multi-Threaded Native Rust"]
+        R1["Tauri Async Commands"] --> R2["Zero-Copy I/O, Sub-ms Search, Pure Rust Invariants"]
+    end
+```
+* **Code Anchors (Grep Targets):**
+  * `src-tauri/src/bundle.rs` -> `bundle_export`, `bundle_import`
+  * `src-tauri/src/search.rs` -> `init_search_db`, `search_boards`, `index_pdf_pages`
+  * `src-tauri/src/audio_inspect.rs` -> `audio_inspect`
+  * `src-tauri/src/geometry.rs` -> `stroke_simplify_and_fit`
+  * `src-tauri/src/colorimetry.rs` -> `color_contrast_check`, `oklch_blend`, `invert_ink_colors`
+  * `src-tauri/src/markdown_parser.rs` -> `markdown_to_html`
+  * `src-tauri/src/power.rs` -> `get_power_status`
+
 ### [TRAP: Tauri-Android-Gradle-BuildTask-Node-Resolution] | Aliases: BuildTask.kt, MODULE_NOT_FOUND, npm run tauri
 > **1-Line Summary:** Tauri Android Gradle integration invokes the package manager CLI via BuildTask.kt; package.json must contain `"tauri": "tauri"` and android init must be invoked through `npm run tauri` to prevent Gradle falling back to raw `node` with broken relative script paths.
 * **Strict Rule:** **NEVER** run `tauri android init` directly via global path without npm context in automated CI, and **NEVER** omit `"tauri": "tauri"` from `package.json` `"scripts"`.
@@ -360,12 +393,27 @@ flowchart LR
 
 
 ### [TRAP: Tauri-Mobile-Platform-Capability-Isolation] | Aliases: desktop.json, global-shortcut:default, Permission not found
-> **1-Line Summary:** Desktop-only Tauri plugins must have their capability permissions isolated in a separate capability JSON with `platforms: ["desktop"]` so mobile build tools (`tauri-build` on Android) do not fail with missing permission schema errors.
-* **Strict Rule:** **NEVER** put desktop-only permissions (such as `global-shortcut:default` or `single-instance`) in `src-tauri/capabilities/default.json` without platform filtering.
-* **Why This Trap Exists (Plain English):** Tauri v2 validates all declared capability permissions at compile time against registered plugins. If `default.json` requests `global-shortcut:default` on an Android target, `tauri-build` throws a fatal error because the global shortcut plugin is only compiled for desktop targets. Isolating desktop-only permissions in `capabilities/desktop.json` with `"platforms": ["desktop"]` ensures that Android builds only evaluate cross-platform permissions.
+> **1-Line Summary:** Desktop-only Tauri plugins must have their capability permissions isolated in a separate capability JSON with `platforms: ["windows", "linux", "macOS"]` so mobile build tools (`tauri-build` on Android) do not fail with missing permission schema errors.
+* **Strict Rule:** **NEVER** put desktop-only permissions (such as `global-shortcut:default` or `single-instance`) in `src-tauri/capabilities/default.json` without platform filtering, and **NEVER** use the generic string `"desktop"` in the platforms array (use explicit OS names `["windows", "linux", "macOS"]`).
+* **Why This Trap Exists (Plain English):** Tauri v2 validates all declared capability permissions at compile time against registered plugins. If `default.json` requests `global-shortcut:default` on an Android target, `tauri-build` throws a fatal error because the global shortcut plugin is only compiled for desktop targets. Furthermore, the capability JSON parser requires exact OS enum variants (`"windows"`, `"linux"`, `"macOS"`, `"android"`, `"iOS"`). Passing `"desktop"` causes `tauri-build` to fail with `failed to parse JSON: unknown variant desktop`.
 * **Protected Code Anchors (Grep Targets):**
-  * `src-tauri/capabilities/desktop.json` -> `"platforms": ["desktop"]`
+  * `src-tauri/capabilities/desktop.json` -> `"platforms": ["windows", "linux", "macOS"]`
   * `src-tauri/capabilities/default.json` -> `"permissions"`
+
+### [TRAP: Lopdf-Manual-Dependency-Conflict] | Aliases: lopdf, pdf-extract, nom crate missing, pure-Rust PDF
+> **1-Line Summary:** Never add an explicit minimal `lopdf` crate entry with `default-features = false` alongside `pdf-extract`; doing so strips the `nom` parser crate and breaks compilation.
+* **Strict Rule:** Let `pdf-extract = "0.12"` manage its own internal dependencies, or ensure features include the required parsers.
+* **Why This Trap Exists (Plain English):** `pdf-extract` relies on `lopdf` with its full parser feature set. Manually forcing `lopdf = { version = "0.35", default-features = false }` disables `nom`, causing rustc to fail during compilation of `lopdf` with `cannot find module or crate nom in this scope`.
+* **Protected Code Anchors (Grep Targets):**
+  * `src-tauri/Cargo.toml` -> `pdf-extract`
+  * `src-tauri/src/search.rs` -> `pdf_extract::extract_text`
+
+### [TRAP: Palette-Clamp-Trait-Scope] | Aliases: palette, Clamp trait, Srgb clamp, colorimetry
+> **1-Line Summary:** Calling `.clamp()` on `palette::Srgb` requires importing `use palette::Clamp;` to satisfy trait bounds.
+* **Strict Rule:** Always import `use palette::Clamp;` whenever clamping color channel components in `colorimetry.rs`.
+* **Why This Trap Exists (Plain English):** In the `palette` crate, color structs do not implement `std::cmp::Ord` because floating-point values have `NaN` and `PartialOrd` only. Attempting to call `.clamp(min, max)` without bringing `palette::Clamp` into scope causes the Rust compiler to search for standard library methods and fail with `the method clamp exists for struct Rgb, but its trait bounds were not satisfied: Rgb: std::cmp::Ord`.
+* **Protected Code Anchors (Grep Targets):**
+  * `src-tauri/src/colorimetry.rs` -> `use palette::Clamp;`
 
 ### [TRAP: ZipWriter-Writer-Trait-Bounds-And-Verification] | Aliases: ZipWriter, Seek trait, HashingWriter, bundle_export
 > **1-Line Summary:** ZipWriter requires `W: Write + Seek`; custom stream wrappers without complete seek implementations must not wrap the archive writer, and verification hashes must be computed from the finalized archive file.

@@ -169,6 +169,21 @@
   * `src/js/app.js` -> `openRulerMenu`, `fitTriangle`, `toggleRuler`
   * `test/set-squares-protractor.test.mjs` -> `triCorners`, `protGeom`
 
+### [FEATURE: Rust-Native-Performance-Engines] | Aliases: bundle.rs, search.rs, audio_inspect.rs, geometry.rs, colorimetry.rs, markdown_parser.rs, power.rs
+> **1-Line Summary:** Native Rust high-performance engine extensions delivering streaming multi-gigabyte ZIP packaging, SQLite FTS5 trigram search and PDF indexing, pure-Rust audio duration inspection, curve fitting, WCAG 2.1 color contrast and Oklch blending, safe CommonMark parsing with KaTeX, and battery monitoring.
+* **User Intention (Non-Negotiable):** Keep the whiteboard completely lag-free regardless of library size, large PDF attachments, or continuous inking, offloading I/O and heavy computation to native background threads while preserving 100% offline invariants.
+* **Visual / UI Behavior:** Instant search across all `.gaussboard` notes and embedded PDF pages; lossless archive export and import with SHA-256 integrity; seamless dark/light mode canvas ink inversion with WCAG AAA contrast safety; and smooth Catmull-Rom Bézier spline rendering without dropping audio timestamp anchors (`p.t`).
+* **Code Anchors (Grep Targets):**
+  * `src-tauri/src/bundle.rs` -> `bundle_export`, `bundle_import`
+  * `src-tauri/src/search.rs` -> `init_search_db`, `search_boards`, `index_pdf_pages`
+  * `src-tauri/src/audio_inspect.rs` -> `audio_inspect`
+  * `src-tauri/src/geometry.rs` -> `stroke_simplify_and_fit`
+  * `src-tauri/src/colorimetry.rs` -> `color_contrast_check`, `oklch_blend`, `invert_ink_colors`
+  * `src-tauri/src/markdown_parser.rs` -> `markdown_to_html`
+  * `src-tauri/src/power.rs` -> `get_power_status`
+  * `src/js/platform/tauri-board.js` -> `window.board.archive`, `window.board.search`, `window.board.geometry`, `window.board.colorimetry`, `window.board.markdown`
+  * `test/tauri-native-bridge.test.mjs` -> `tauri-board bridge suite`
+
 
 ## 3. Planned Features & App-Merge Wishlist
 
