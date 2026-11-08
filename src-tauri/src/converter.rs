@@ -235,6 +235,7 @@ pub async fn import_to_pdf<R: Runtime>(
         return Ok(bytes);
     }
 
+    #[cfg(target_os = "windows")]
     let out_pdf = tmp_dir.join("output.pdf");
 
     // 1. Try Microsoft Office COM on Windows

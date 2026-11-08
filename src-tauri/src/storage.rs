@@ -11,6 +11,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Runtime, State};
+#[cfg(desktop)]
 use tauri_plugin_dialog::DialogExt;
 use tempfile::Builder as TempFileBuilder;
 
@@ -397,33 +398,42 @@ pub async fn storage_choose<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Value, String> {
-    let picked = app.dialog().file().blocking_pick_folder();
-    match picked {
-        Some(folder_path) => {
-            let path_buf = folder_path
-                .into_path()
-                .map_err(|e| format!("Invalid folder path: {}", e))?;
-            let existing_json_count = fs::read_dir(&path_buf)
-                .ok()
-                .map(|it| {
-                    it.flatten()
-                        .filter(|e| {
-                            e.path()
-                                .extension()
-                                .and_then(|ext| ext.to_str())
-                                == Some("json")
-                        })
-                        .count()
-                })
-                .unwrap_or(0);
-            Ok(json!({
-                "canceled": false,
-                "path": path_buf.to_string_lossy(),
-                "existingCount": existing_json_count,
-                "currentDir": state.boards_dir().to_string_lossy()
-            }))
+    #[cfg(mobile)]
+    {
+        let _ = (app, state);
+        return Err("Custom storage directory selection is not supported on mobile platforms".into());
+    }
+
+    #[cfg(desktop)]
+    {
+        let picked = app.dialog().file().blocking_pick_folder();
+        match picked {
+            Some(folder_path) => {
+                let path_buf = folder_path
+                    .into_path()
+                    .map_err(|e| format!("Invalid folder path: {}", e))?;
+                let existing_json_count = fs::read_dir(&path_buf)
+                    .ok()
+                    .map(|it| {
+                        it.flatten()
+                            .filter(|e| {
+                                e.path()
+                                    .extension()
+                                    .and_then(|ext| ext.to_str())
+                                    == Some("json")
+                            })
+                            .count()
+                    })
+                    .unwrap_or(0);
+                Ok(json!({
+                    "canceled": false,
+                    "path": path_buf.to_string_lossy(),
+                    "existingCount": existing_json_count,
+                    "currentDir": state.boards_dir().to_string_lossy()
+                }))
+            }
+            None => Ok(json!({ "canceled": true })),
         }
-        None => Ok(json!({ "canceled": true })),
     }
 }
 
