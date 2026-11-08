@@ -187,5 +187,6 @@
 * **Active Verification Suite:** `node scripts/smoke.js --new-features` (24/24 passing)
 * **Internationalization Suite:** `node scripts/i18n-check.js` (2,367/2,367 across 7 locales)
 * **Android Platform Suite:** `node --test test/android-*.test.js` (82/82 passing)
+* **Tauri 2 Rust Native Port:** `src-tauri/` (Tauri 2.1 native host with custom `app://board/` protocol, crash-safe `<id>.json` storage, SHA-256 assets, and Axum sync)
 * **Core Data Schemas & State:** `src/js/core/store.js` (`Store`, `doc.objects`, `doc.pages`, `doc.audioTracks`)
 * **Platform & Packaging:** `main.js`, `preload.js`, `package.json`

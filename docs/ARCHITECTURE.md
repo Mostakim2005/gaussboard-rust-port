@@ -214,3 +214,38 @@ See SUBSYSTEM sections above: Dual-Runtime-Platform, Document-Model-Op-Log, Inki
   1. Create `src/locales/<code>.json` with the English sentence as key
   2. Register in `src/js/i18n.js` -> `LANGUAGES`
   3. Verify with `node scripts/i18n-check.js`
+
+## 6. Tauri 2 Rust Native Subsystem
+### [SUBSYSTEM: Tauri-Rust-Native-Host] | Aliases: Tauri 2, Rust port, src-tauri, native backend
+> **1-Line Summary:** Native, high-performance Rust backend replacing Electron main process with crash-safe storage, content-addressed assets, X25519 LAN sync, and native WebView2 print-to-pdf.
+* **How It Works (Plain English):** The Tauri backend (`src-tauri/`) listens on the custom `app://board/` protocol scheme to serve Vanilla ES6 modules directly to the WebView2 frontend. The frontend adapter (`src/js/platform/tauri-board.js`) polyfills the `window.board` contract synchronously using Tauri 2 `invoke()` and cached clipboard signatures. Background tasks manage UDP discovery, Axum HTTP sync transport, and MS Office COM automation.
+* **Architecture Diagram:**
+```mermaid
+flowchart TD
+    subgraph Frontend ["WebView2 Frontend (src/)"]
+        AppUI["Canvas UI & STEM Tools (app.js)"]
+        TauriShim["tauri-board.js (window.board shim)"]
+        ClipCache["Synchronous Clipboard Cache"]
+    end
+
+    subgraph TauriHost ["Tauri 2 Native Host (src-tauri/)"]
+        CustomURI["protocol_app.rs (app://board/)"]
+        Storage["storage.rs (<id>.json + atomic rename)"]
+        Assets["assets.rs (Content-Addressed SHA-256)"]
+        AudioStream["recording.rs (WebM Chunk Streaming)"]
+        Lease["lease.rs (Single-Editor Arbitration)"]
+        DocConv["converter.rs (3-Tier Office/PDF Conversion)"]
+        LAN["lan_sync (UDP 53319 + TCP 53318 Axum)"]
+    end
+
+    AppUI --> TauriShim
+    TauriShim --> ClipCache
+    TauriShim -->|IPC invoke| TauriHost
+    CustomURI -->|Serve ES6 / Assets| AppUI
+```
+* **Code Anchors (Grep Targets):**
+  * `src/js/platform/tauri-board.js` -> `initTauriBridge`, `window.board`
+  * `src-tauri/src/lib.rs` -> `run`, `tauri::Builder`, `invoke_handler`
+  * `src-tauri/src/protocol_app.rs` -> `handle_app_protocol`
+  * `src-tauri/src/storage.rs` -> `boards_save`, `atomic_write_bytes`
+  * `src-tauri/src/lan_sync/mod.rs` -> `start_lan_sync_services`, `LanSyncManager`

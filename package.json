@@ -7,6 +7,8 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
     "smoke": "node scripts/smoke.js",
     "smoke:base": "node scripts/smoke.js --base",
     "smoke:new": "node scripts/smoke.js --new-features",

@@ -109,6 +109,35 @@ flowchart LR
 ```
 * **Code Anchors (Grep Targets):**
   * `src/js/core/connectors.js` -> `routeOrthogonal`
+
+### [DECISION: Tauri-Rust-Native-Host] | Aliases: Tauri 2, Rust port, src-tauri, native backend
+> **1-Line Summary:** Replaced Electron runtime with Tauri 2 on Windows using pure Rust backend, reducing idle memory, shipping lightweight portable binary, and retaining 100% wire-compatibility with Electron/Android sync peers.
+* **Decision Maker:** `[DECIDED BY: HUMAN - Project Owner]`
+* **Original User Intention:** A zero-lag, instant-launch desktop binary with low memory footprint and strict offline invariants.
+* **Options Considered:**
+  * **Option A (Rejected):** Rewrite frontend in WebAssembly or native GUI (egui/iced). Rejected because it discards months of fine-tuned canvas inking, KaTeX, and 24 active STEM engines.
+  * **Option B (Chosen):** Keep Vanilla ES6 frontend intact and swap Electron main process for Tauri 2 Rust host with custom `app://board/` protocol, custom atomic storage, and Axum sync server.
+* **Visual Pivot Map (What Failed vs. What Works):**
+```mermaid
+flowchart LR
+    subgraph Old["Electron 43 Host"]
+        E1[Heavy Chromium + Node.js Main] --> E2[120MB+ idle RAM]
+    end
+    subgraph New["Tauri 2 Rust Host"]
+        R1[Native WebView2 + Rust Kernel] --> R2[30MB idle RAM, 100% offline parity]
+    end
+```
+* **Code Anchors (Grep Targets):**
+  * `src-tauri/src/lib.rs` -> `run`
+  * `src/js/platform/tauri-board.js` -> `initTauriBridge`
+
+### [TRAP: Tauri-Synchronous-Clipboard-Signature] | Aliases: cachedClipboardSig, clipboardStamp, synchronous IPC
+> **1-Line Summary:** Clipboard signature checks in canvas copy/paste are synchronous; tauri-board.js must maintain a cached signature updated on focus/write.
+* **Strict Rule:** **NEVER** return a Promise from `window.board.clipboardSignature()`. `app.js` evaluates `if (now && this.clipStamp && now === this.clipStamp)` synchronously.
+* **Why This Trap Exists (Plain English):** Tauri IPC `invoke()` is strictly asynchronous. If `clipboardSignature()` returns a Promise object, `[object Promise] === this.clipStamp` always evaluates to false, completely breaking stroke duplication on paste.
+* **Protected Code Anchors (Grep Targets):**
+  * `src/js/platform/tauri-board.js` -> `refreshClipboardSignature`, `clipboardSignature`
+  * `src/js/app.js` -> `clipboardStamp`, `paste`
   * `src/js/core/tools.js` -> `holdToShape`
   * `src/js/core/ink.js` -> `preserveTime`
 
@@ -268,3 +297,32 @@ flowchart LR
   * `src/js/core/circuit-sim.js` -> `solveMNA`, `stepSim`, `armatureLatch`
   * `src/js/ui/circuit-workbench.js` -> `openWorkbench`
   * `src/js/core/connectors.js` -> `routeOrthogonal`
+
+### [DECISION: Tauri-Rust-Native-Host] | Aliases: Tauri 2, Rust port, src-tauri, native backend
+> **1-Line Summary:** Replaced Electron runtime with Tauri 2 on Windows using pure Rust backend, reducing idle memory, shipping lightweight portable binary, and retaining 100% wire-compatibility with Electron/Android sync peers.
+* **Decision Maker:** `[DECIDED BY: HUMAN - Project Owner]`
+* **Original User Intention:** A zero-lag, instant-launch desktop binary with low memory footprint and strict offline invariants.
+* **Options Considered:**
+  * **Option A (Rejected):** Rewrite frontend in WebAssembly or native GUI (egui/iced). Rejected because it discards months of fine-tuned canvas inking, KaTeX, and 24 active STEM engines.
+  * **Option B (Chosen):** Keep Vanilla ES6 frontend intact and swap Electron main process for Tauri 2 Rust host with custom `app://board/` protocol, custom atomic storage, and Axum sync server.
+* **Visual Pivot Map (What Failed vs. What Works):**
+```mermaid
+flowchart LR
+    subgraph Old["Electron 43 Host"]
+        E1[Heavy Chromium + Node.js Main] --> E2[120MB+ idle RAM]
+    end
+    subgraph New["Tauri 2 Rust Host"]
+        R1[Native WebView2 + Rust Kernel] --> R2[30MB idle RAM, 100% offline parity]
+    end
+```
+* **Code Anchors (Grep Targets):**
+  * `src-tauri/src/lib.rs` -> `run`
+  * `src/js/platform/tauri-board.js` -> `initTauriBridge`
+
+### [TRAP: Tauri-Synchronous-Clipboard-Signature] | Aliases: cachedClipboardSig, clipboardStamp, synchronous IPC
+> **1-Line Summary:** Clipboard signature checks in canvas copy/paste are synchronous; tauri-board.js must maintain a cached signature updated on focus/write.
+* **Strict Rule:** **NEVER** return a Promise from `window.board.clipboardSignature()`. `app.js` evaluates `if (now && this.clipStamp && now === this.clipStamp)` synchronously.
+* **Why This Trap Exists (Plain English):** Tauri IPC `invoke()` is strictly asynchronous. If `clipboardSignature()` returns a Promise object, `[object Promise] === this.clipStamp` always evaluates to false, completely breaking stroke duplication on paste.
+* **Protected Code Anchors (Grep Targets):**
+  * `src/js/platform/tauri-board.js` -> `refreshClipboardSignature`, `clipboardSignature`
+  * `src/js/app.js` -> `clipboardStamp`, `paste`

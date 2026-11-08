@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default permissions for GaussBoard windows",
+  "windows": [
+    "main",
+    "splashscreen",
+    "pdf-*",
+    "conv-*"
+  ],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "shell:default",
+    "clipboard-manager:default"
+  ]
+}
