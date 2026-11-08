@@ -312,21 +312,19 @@ pub async fn search_index_pdf(
     let path = file_path.clone();
 
     let (pages_data, total_pages, total_chars) = tokio::task::spawn_blocking(move || -> Result<_, String> {
-        let doc = lopdf::Document::load(&path)
+        let full_text = pdf_extract::extract_text(&path)
             .map_err(|e| format!("Failed to parse PDF document at {}: {}", path, e))?;
 
-        let page_numbers: Vec<u32> = doc.page_iter().collect();
-        let total = page_numbers.len();
+        let raw_pages: Vec<&str> = full_text.split('\x0c').collect();
+        let total = raw_pages.len();
         let mut extracted: Vec<(u32, String)> = Vec::with_capacity(total);
         let mut chars_count = 0;
 
-        for page_num in page_numbers {
-            if let Ok(text) = doc.extract_text(&[page_num]) {
-                let trimmed = text.trim();
-                if !trimmed.is_empty() {
-                    chars_count += trimmed.len();
-                    extracted.push((page_num, trimmed.to_string()));
-                }
+        for (idx, page_str) in raw_pages.iter().enumerate() {
+            let trimmed = page_str.trim();
+            if !trimmed.is_empty() {
+                chars_count += trimmed.len();
+                extracted.push(((idx + 1) as u32, trimmed.to_string()));
             }
         }
         Ok((extracted, total, chars_count))

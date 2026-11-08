@@ -57,7 +57,6 @@ kurbo = { version = "0.11", features = ["serde"] }
 
 # PDF Text Extraction & Page Indexing (100% Pure Rust)
 pdf-extract = "0.12"
-lopdf = { version = "0.35", default-features = false }
 
 # Perceptual Colorimetry, Oklch Mixing & WCAG 2.1 Contrast
 palette = { version = "0.7", default-features = false, features = ["std", "serializing"] }
