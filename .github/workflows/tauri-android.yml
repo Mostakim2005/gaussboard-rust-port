@@ -48,16 +48,17 @@ jobs:
           workspaces: './src-tauri -> target'
 
       - name: Install dependencies
-        run: npm install
-
-      - name: Install Tauri CLI globally
-        run: npm install -g @tauri-apps/cli@latest
+        run: npm ci
 
       - name: Initialize Tauri Android project
-        run: tauri android init
+        run: npm run tauri android init
+
+      - name: Inspect generated BuildTask
+        run: |
+          find src-tauri/gen/android -name "BuildTask.kt" -exec cat {} +
 
       - name: Build Tauri Android APK
-        run: tauri android build --apk --target aarch64
+        run: npm run tauri android build -- --apk --target aarch64
 
       - name: Upload Android APK Artifacts
         uses: actions/upload-artifact@v4
