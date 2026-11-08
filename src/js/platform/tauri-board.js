@@ -182,7 +182,25 @@
       upsertCard: (cardId, boardId, prompt, dueTimestamp) =>
         invoke('study_card_upsert', { cardId, boardId, prompt, dueTimestamp: Number(dueTimestamp) }),
       getDueCards: (nowTimestamp, limit) =>
-        invoke('study_cards_due', { nowTimestamp: Number(nowTimestamp), limit: typeof limit === 'number' ? limit : null })
+        invoke('study_cards_due', { nowTimestamp: Number(nowTimestamp), limit: typeof limit === 'number' ? limit : null }),
+      indexPdf: (boardId, title, filePath, tags) =>
+        invoke('search_index_pdf', { boardId, title, filePath, tags: tags || null }),
+      extractPdfText: (filePath) =>
+        invoke('pdf_extract_full_text', { filePath })
+    },
+
+    colorimetry: {
+      wcagContrast: (foregroundHex, backgroundHex) =>
+        invoke('color_wcag_contrast', { foregroundHex, backgroundHex }),
+      oklchMix: (colorAHex, colorBHex, factor) =>
+        invoke('color_oklch_mix', { colorAHex, colorBHex, factor: Number(factor) }),
+      invertThemeInk: (colorHex, targetBgHex, isDarkTarget) =>
+        invoke('color_invert_theme_ink', { colorHex, targetBgHex, isDarkTarget: !!isDarkTarget })
+    },
+
+    markdown: {
+      renderToHtml: (markdown) =>
+        invoke('markdown_to_html', { markdown })
     },
 
     power: {

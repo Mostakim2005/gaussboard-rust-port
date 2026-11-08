@@ -55,6 +55,16 @@ symphonia = { version = "0.5.4", features = ["all"] }
 # Stroke Geometry & Curve Fitting
 kurbo = { version = "0.11", features = ["serde"] }
 
+# PDF Text Extraction & Page Indexing (100% Pure Rust)
+pdf-extract = "0.12"
+lopdf = { version = "0.35", default-features = false }
+
+# Perceptual Colorimetry, Oklch Mixing & WCAG 2.1 Contrast
+palette = { version = "0.7", default-features = false, features = ["std", "serializing"] }
+
+# Linear-Time CommonMark & Math/Table Document Parser
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+
 # Desktop-only plugins
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2.2"

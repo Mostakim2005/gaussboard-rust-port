@@ -38,6 +38,24 @@ test('tauri-board bridge exposes archive, search, geometry, audioInspect and pow
           if (cmd === 'study_cards_due') {
             return [{ card_id: 'c1', board_id: 'b1', prompt: 'What is Ohm\'s Law?', due_timestamp: 1700000000 }];
           }
+          if (cmd === 'search_index_pdf') {
+            return { board_id: args.boardId, title: args.title, total_pages: 5, indexed_pages: 5, total_chars: 4200 };
+          }
+          if (cmd === 'pdf_extract_full_text') {
+            return 'Sample extracted text with math \\alpha = 0.05';
+          }
+          if (cmd === 'color_wcag_contrast') {
+            return { ratio: 7.5, wcag_aa_normal: true, wcag_aa_large: true, wcag_aaa_normal: true, wcag_aaa_large: true, wcag_graphics: true };
+          }
+          if (cmd === 'color_oklch_mix') {
+            return '#336699';
+          }
+          if (cmd === 'color_invert_theme_ink') {
+            return '#e0e0e0';
+          }
+          if (cmd === 'markdown_to_html') {
+            return '<p>Test <span class="math inline" data-math="x">\\(x\\)</span></p>';
+          }
           if (cmd === 'get_power_status') {
             return { on_battery: false, battery_percent: 98, power_saver: false };
           }
@@ -107,7 +125,36 @@ test('tauri-board bridge exposes archive, search, geometry, audioInspect and pow
   const dueCards = await board.search.getDueCards(1700000000, 20);
   assert.equal(dueCards[0].card_id, 'c1');
 
-  // 5. Hardware Power & Battery Status API
+  // 5. PDF Text & Slide Indexing API
+  const pdfSummary = await board.search.indexPdf('b1', 'Quantum Lecture', 'C:/docs/slides.pdf', 'physics');
+  assert.equal(pdfSummary.indexed_pages, 5);
+  assert.equal(calls[calls.length - 1].cmd, 'search_index_pdf');
+
+  const pdfFullText = await board.search.extractPdfText('C:/docs/slides.pdf');
+  assert.ok(pdfFullText.includes('\\alpha'));
+  assert.equal(calls[calls.length - 1].cmd, 'pdf_extract_full_text');
+
+  // 6. Colorimetry, WCAG 2.1 & Oklch Mixing API
+  assert.ok(board.colorimetry, 'board.colorimetry must exist');
+  const contrast = await board.colorimetry.wcagContrast('#000000', '#ffffff');
+  assert.equal(contrast.wcag_aa_normal, true);
+  assert.equal(calls[calls.length - 1].cmd, 'color_wcag_contrast');
+
+  const mixed = await board.colorimetry.oklchMix('#0078d4', '#e81123', 0.5);
+  assert.equal(mixed, '#336699');
+  assert.equal(calls[calls.length - 1].cmd, 'color_oklch_mix');
+
+  const invertedInk = await board.colorimetry.invertThemeInk('#101010', '#1e1e1e', true);
+  assert.equal(invertedInk, '#e0e0e0');
+  assert.equal(calls[calls.length - 1].cmd, 'color_invert_theme_ink');
+
+  // 7. Linear-Time CommonMark & Math HTML Parser API
+  assert.ok(board.markdown, 'board.markdown must exist');
+  const html = await board.markdown.renderToHtml('Test $x$');
+  assert.ok(html.includes('math inline'));
+  assert.equal(calls[calls.length - 1].cmd, 'markdown_to_html');
+
+  // 8. Hardware Power & Battery Status API
   assert.ok(board.power, 'board.power must exist');
   const powerStatus = await board.power.getStatus();
   assert.equal(powerStatus.battery_percent, 98);

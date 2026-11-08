@@ -6,38 +6,6 @@ use std::path::{Path, PathBuf};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-pub struct HashingWriter<W: Write> {
-    inner: W,
-    hasher: Sha256,
-    bytes_written: u64,
-}
-
-impl<W: Write> HashingWriter<W> {
-    pub fn new(inner: W) -> Self {
-        Self {
-            inner,
-            hasher: Sha256::new(),
-            bytes_written: 0,
-        }
-    }
-    pub fn finalize_sha256(self) -> (W, String, u64) {
-        let hash = hex::encode(self.hasher.finalize());
-        (self.inner, hash, self.bytes_written)
-    }
-}
-
-impl<W: Write> Write for HashingWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let n = self.inner.write(buf)?;
-        self.hasher.update(&buf[..n]);
-        self.bytes_written += n as u64;
-        Ok(n)
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
-    }
-}
-
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct BundleExportResult {
     pub archive_path: String,
@@ -67,7 +35,6 @@ pub async fn bundle_export(
         let out_file = File::create(&dest_zip_path)
             .map_err(|e| format!("Failed to create destination file: {}", e))?;
         let buf_writer = BufWriter::with_capacity(128 * 1024, out_file);
-        let mut hashing_writer = HashingWriter::new(buf_writer);
 
         let compression = if use_zstd.unwrap_or(false) {
             CompressionMethod::Zstd
@@ -79,7 +46,7 @@ pub async fn bundle_export(
             .compression_method(compression)
             .unix_permissions(0o644);
 
-        let mut zip = ZipWriter::new(&mut hashing_writer);
+        let mut zip = ZipWriter::new(buf_writer);
 
         for entry in walkdir::WalkDir::new(src_path).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
@@ -114,13 +81,37 @@ pub async fn bundle_export(
             }
         }
 
-        zip.finish()
+        let mut finished_writer = zip
+            .finish()
             .map_err(|e| format!("Failed to finalize zip archive: {}", e))?;
-        let (_, hash, bytes) = hashing_writer.finalize_sha256();
+        finished_writer
+            .flush()
+            .map_err(|e| format!("Failed to flush zip archive: {}", e))?;
+        drop(finished_writer);
+
+        // Calculate cryptographic SHA-256 and total bytes of the verified archive
+        let mut check_file = File::open(&dest_zip_path)
+            .map_err(|e| format!("Failed to open generated archive for verification: {}", e))?;
+        let total_bytes = check_file
+            .metadata()
+            .map(|m| m.len())
+            .unwrap_or(0);
+        let mut hasher = Sha256::new();
+        let mut check_buf = [0u8; 64 * 1024];
+        loop {
+            let n = check_file
+                .read(&mut check_buf)
+                .map_err(|e| e.to_string())?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&check_buf[..n]);
+        }
+        let hash = hex::encode(hasher.finalize());
 
         Ok(BundleExportResult {
             archive_path: dest_zip_path,
-            total_bytes: bytes,
+            total_bytes,
             sha256: hash,
         })
     })

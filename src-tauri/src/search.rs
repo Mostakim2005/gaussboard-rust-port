@@ -290,3 +290,95 @@ pub fn study_cards_due(
 
     Ok(rows.flatten().collect())
 }
+
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PdfIndexSummary {
+    pub board_id: String,
+    pub title: String,
+    pub total_pages: usize,
+    pub indexed_pages: usize,
+    pub total_chars: usize,
+}
+
+#[tauri::command]
+pub async fn search_index_pdf(
+    pool: State<'_, DbPool>,
+    board_id: String,
+    title: String,
+    file_path: String,
+    tags: Option<String>,
+) -> Result<PdfIndexSummary, String> {
+    let path = file_path.clone();
+
+    let (pages_data, total_pages, total_chars) = tokio::task::spawn_blocking(move || -> Result<_, String> {
+        let doc = lopdf::Document::load(&path)
+            .map_err(|e| format!("Failed to parse PDF document at {}: {}", path, e))?;
+
+        let page_numbers: Vec<u32> = doc.page_iter().collect();
+        let total = page_numbers.len();
+        let mut extracted: Vec<(u32, String)> = Vec::with_capacity(total);
+        let mut chars_count = 0;
+
+        for page_num in page_numbers {
+            if let Ok(text) = doc.extract_text(&[page_num]) {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    chars_count += trimmed.len();
+                    extracted.push((page_num, trimmed.to_string()));
+                }
+            }
+        }
+        Ok((extracted, total, chars_count))
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {}", e))??;
+
+    let mut conn = pool.get().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    let base_tag = tags.unwrap_or_default();
+    let pdf_tags = if base_tag.is_empty() {
+        "pdf,attachment".to_string()
+    } else {
+        format!("pdf,attachment,{}", base_tag)
+    };
+
+    let pattern = format!("{}#page=%", board_id);
+    let _ = tx.execute("DELETE FROM board_fts WHERE board_id = ? OR board_id LIKE ?", [&board_id, &pattern]);
+
+    let mut indexed_count = 0;
+    {
+        let mut stmt = tx.prepare(
+            "INSERT INTO board_fts(board_id, title, content, tags) VALUES (?, ?, ?, ?)"
+        ).map_err(|e| e.to_string())?;
+
+        for (page_num, page_text) in &pages_data {
+            let page_target_id = format!("{}#page={}", board_id, page_num);
+            let page_title = format!("{} (Page {})", title, page_num);
+            stmt.execute([&page_target_id, &page_title, page_text, &pdf_tags])
+                .map_err(|e| format!("FTS insert failed on page {}: {}", page_num, e))?;
+            indexed_count += 1;
+        }
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+
+    Ok(PdfIndexSummary {
+        board_id,
+        title,
+        total_pages,
+        indexed_pages: indexed_count,
+        total_chars,
+    })
+}
+
+#[tauri::command]
+pub async fn pdf_extract_full_text(file_path: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        pdf_extract::extract_text(&file_path)
+            .map_err(|e| format!("PDF text extraction failed: {}", e))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}

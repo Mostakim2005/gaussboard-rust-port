@@ -14,7 +14,6 @@
     "shell:default",
     "clipboard-manager:default",
     "notification:default",
-    "os:default",
-    "global-shortcut:default"
+    "os:default"
   ]
 }

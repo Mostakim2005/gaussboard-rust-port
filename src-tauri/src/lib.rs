@@ -3,10 +3,12 @@ pub mod assets;
 pub mod audio_inspect;
 pub mod bundle;
 pub mod clipboard;
+pub mod colorimetry;
 pub mod converter;
 pub mod geometry;
 pub mod lan_sync;
 pub mod lease;
+pub mod markdown_parser;
 pub mod pdf_export;
 pub mod power;
 pub mod protocol_app;
@@ -234,6 +236,12 @@ pub fn run() {
             search::graph_get_backlinks,
             search::study_card_upsert,
             search::study_cards_due,
+            search::search_index_pdf,
+            search::pdf_extract_full_text,
+            colorimetry::color_wcag_contrast,
+            colorimetry::color_oklch_mix,
+            colorimetry::color_invert_theme_ink,
+            markdown_parser::markdown_to_html,
             power::get_power_status,
         ])
         .run(tauri::generate_context!())

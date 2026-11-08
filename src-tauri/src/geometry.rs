@@ -1,5 +1,5 @@
 // src-tauri/src/geometry.rs
-use kurbo::{BezPath, Point, Rect, Shape};
+use kurbo::{BezPath, ParamCurveArclen, Point, Rect, Shape};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -121,7 +121,7 @@ pub fn stroke_simplify_and_fit(
 
     // Step 3: Analytical AABB Bounding Box calculation via kurbo
     let rect: Rect = bez_path.bounding_box();
-    let total_arc_length = bez_path.arclen(1e-2);
+    let total_arc_length: f64 = bez_path.segments().map(|seg| seg.arclen(1e-2)).sum();
 
     Ok(StrokeFitResult {
         segments,
