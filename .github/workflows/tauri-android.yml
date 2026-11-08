@@ -60,11 +60,30 @@ jobs:
       - name: Build Tauri Android APK
         run: npm run tauri android build -- --apk --target aarch64
 
+      - name: Sign Android APK
+        run: |
+          echo "--- Generating signing keystore ---"
+          keytool -genkey -v -keystore release.keystore -alias gaussboard -keyalg RSA -keysize 2048 -validity 10000 -storepass gaussboard -keypass gaussboard -dname "CN=GaussBoard, OU=Engineering, O=theBoringCodes, L=City, S=State, C=US"
+          
+          APKSIGNER=$(find /usr/local/lib/android/sdk/build-tools -name "apksigner" | sort -V | tail -n 1)
+          echo "Using apksigner: $APKSIGNER"
+          
+          mkdir -p dist-apk
+          for apk in $(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk"); do
+            echo "Signing $apk -> dist-apk/GaussBoard-1.0.0-arm64.apk"
+            $APKSIGNER sign --ks release.keystore --ks-pass pass:gaussboard --key-pass pass:gaussboard --out dist-apk/GaussBoard-1.0.0-arm64.apk "$apk"
+            break
+          done
+          
+          echo "--- Verifying signature ---"
+          $APKSIGNER verify -v dist-apk/GaussBoard-1.0.0-arm64.apk
+
       - name: Upload Android APK Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: GaussBoard-Rust-Android-APK
           path: |
+            dist-apk/*.apk
             src-tauri/gen/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: warn
 
@@ -73,6 +92,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            dist-apk/*.apk
             src-tauri/gen/android/app/build/outputs/apk/**/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
