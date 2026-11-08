@@ -326,3 +326,34 @@ flowchart LR
 * **Protected Code Anchors (Grep Targets):**
   * `src/js/platform/tauri-board.js` -> `refreshClipboardSignature`, `clipboardSignature`
   * `src/js/app.js` -> `clipboardStamp`, `paste`
+
+### [DECISION: Tauri-Android-Unified-Cross-Platform] | Aliases: mobile target, Android APK, Gradle rustBuild, apksigner
+> **1-Line Summary:** Adopted Tauri 2 Android (`aarch64-linux-android`) over legacy standalone Kotlin companion app, allowing 100% of the active STEM whiteboard engines, canvas inking, and LAN sync to run natively on Android tablets.
+* **Decision Maker:** `[DECIDED BY: HUMAN - Project Owner]`
+* **Original User Intention:** Unified codebase where bug fixes and new whiteboard features appear simultaneously on both desktop Windows and Android tablets without maintaining two divergent app architectures.
+* **Options Considered:**
+  * **Option A (Rejected):** Separate Kotlin companion app (`android/`). Rejected because every new canvas tool, circuit simulator, or chemistry visualizer would require a complete second rewrite in Kotlin and Android Canvas API.
+  * **Option B (Chosen):** Single shared Vanilla ES6 frontend compiled into Tauri 2 Android APK with Rust mobile entry point (`#[tauri::mobile_entry_point]`), maintaining 100% feature parity.
+* **Visual Pivot Map (What Failed vs. What Works):**
+```mermaid
+flowchart LR
+    subgraph Failed["❌ Dual Divergent Codebases"]
+        K1["Desktop JS"] --> K2["Lagging Kotlin Rewrite"]
+        K2 --> K3["Feature Desync & Token Drain"]
+    end
+    subgraph Active["✅ Unified Tauri 2 Platform"]
+        T1["Shared src/ (Vanilla ES6)"] --> T2["Tauri 2 Rust Host (Windows .exe)"]
+        T1 --> T3["Tauri 2 Android APK (arm64)"]
+    end
+```
+* **Code Anchors (Grep Targets):**
+  * `.github/workflows/tauri-android.yml` -> `npm run tauri android build`
+  * `src-tauri/src/lib.rs` -> `mobile_entry_point`
+
+### [TRAP: Tauri-Android-Gradle-BuildTask-Node-Resolution] | Aliases: BuildTask.kt, MODULE_NOT_FOUND, npm run tauri
+> **1-Line Summary:** Tauri Android Gradle integration invokes the package manager CLI via BuildTask.kt; package.json must contain `"tauri": "tauri"` and android init must be invoked through `npm run tauri` to prevent Gradle falling back to raw `node` with broken relative script paths.
+* **Strict Rule:** **NEVER** run `tauri android init` directly via global path without npm context in automated CI, and **NEVER** omit `"tauri": "tauri"` from `package.json` `"scripts"`.
+* **Why This Trap Exists (Plain English):** When Gradle runs `:app:rustBuildArm64Release`, it executes the command recorded in `BuildTask.kt`. If initialized without npm context, Tauri bakes in `val executable = "node"` with a relative path `src-tauri/tauri`, which throws `MODULE_NOT_FOUND`. Initializing with `npm run tauri android init` bakes in `npm run tauri -- android android-studio-script`, which resolves cleanly via `node_modules/.bin/tauri`.
+* **Protected Code Anchors (Grep Targets):**
+  * `package.json` -> `"tauri": "tauri"`
+  * `.github/workflows/tauri-android.yml` -> `npm run tauri android init`

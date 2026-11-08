@@ -249,3 +249,23 @@ flowchart TD
   * `src-tauri/src/protocol_app.rs` -> `handle_app_protocol`
   * `src-tauri/src/storage.rs` -> `boards_save`, `atomic_write_bytes`
   * `src-tauri/src/lan_sync/mod.rs` -> `start_lan_sync_services`, `LanSyncManager`
+
+### [SUBSYSTEM: Tauri-Android-Mobile-Compilation] | Aliases: Android APK, aarch64-linux-android, NDK 27, apksigner
+> **1-Line Summary:** Non-interactive GitHub Actions cloud compilation pipeline cross-compiling the pure Rust backend (libgaussboard_lib.so) for ARM64 Android, assembling the APK via Gradle, and signing with APK Signature Scheme v2/v3.
+* **How It Works (Plain English):** The Tauri Android Gradle plugin compiles `libgaussboard_lib.so` via Android NDK 27 and wraps the Vanilla ES6 canvas assets inside Android's native WebView. The `tauri-android` CI workflow automatically routes Gradle's `rustBuildArm64Release` task through `npm run tauri`, builds `app-universal-release-unsigned.apk`, and applies an automated `apksigner` step generating `GaussBoard-1.0.0-arm64.apk` for direct single-tap mobile installation.
+* **Data Flow Diagram:**
+```mermaid
+flowchart LR
+    subgraph CloudCI ["GitHub Actions (tauri-android.yml)"]
+        A1["dtolnay/rust-toolchain (aarch64)"] --> A2["cargo build (libgaussboard_lib.so)"]
+        A3["Android NDK 27 + SDK 34"] --> A4["Gradle assembleRelease"]
+        A2 --> A4
+        A4 --> A5["app-universal-release-unsigned.apk"]
+        A5 --> A6["apksigner (v2 + v3 scheme)"]
+        A6 --> A7["GaussBoard-1.0.0-arm64.apk (Signed Release)"]
+    end
+```
+* **Code Anchors (Grep Targets):**
+  * `.github/workflows/tauri-android.yml` -> `build-tauri-android`, `npm run tauri android build`, `apksigner`
+  * `src-tauri/Cargo.toml` -> `[lib]`, `crate-type = ["staticlib", "cdylib", "rlib"]`
+  * `src-tauri/src/lib.rs` -> `#[cfg_attr(mobile, tauri::mobile_entry_point)]`

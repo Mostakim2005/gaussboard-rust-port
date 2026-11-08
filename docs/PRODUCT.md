@@ -185,8 +185,8 @@
 ## 4. Canonical References & Live Verification
 * **Core Documentation Suite:** `docs/PRODUCT.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS_AND_TRAPS.md`, `docs/releases/ANDROID_READINESS.md`
 * **Active Verification Suite:** `node scripts/smoke.js --new-features` (24/24 passing)
-* **Internationalization Suite:** `node scripts/i18n-check.js` (2,367/2,367 across 7 locales)
+* **Internationalization Suite:** `node scripts/i18n-check.js` (2,380/2,380 across 7 locales)
 * **Android Platform Suite:** `node --test test/android-*.test.js` (82/82 passing)
-* **Tauri 2 Rust Native Port:** `src-tauri/` (Tauri 2.1 native host with custom `app://board/` protocol, crash-safe `<id>.json` storage, SHA-256 assets, and Axum sync)
+* **Tauri 2 Rust Native Port:** `src-tauri/` (Tauri 2.1 native host with custom `app://board/` protocol, crash-safe `<id>.json` storage, SHA-256 assets, Axum sync, Windows portable/NSIS/MSI, and v2/v3 signed Android ARM64 APK via `tauri-android` workflow)
 * **Core Data Schemas & State:** `src/js/core/store.js` (`Store`, `doc.objects`, `doc.pages`, `doc.audioTracks`)
-* **Platform & Packaging:** `main.js`, `preload.js`, `package.json`
+* **Platform & Packaging:** `main.js`, `preload.js`, `package.json`, `.github/workflows/tauri-release.yml`, `.github/workflows/tauri-android.yml`
