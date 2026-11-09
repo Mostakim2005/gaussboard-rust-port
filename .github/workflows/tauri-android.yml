@@ -70,13 +70,13 @@ jobs:
           
           mkdir -p dist-apk
           for apk in $(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk"); do
-            echo "Signing $apk -> dist-apk/GaussBoard-1.0.0-arm64.apk"
-            $APKSIGNER sign --ks release.keystore --ks-pass pass:gaussboard --key-pass pass:gaussboard --out dist-apk/GaussBoard-1.0.0-arm64.apk "$apk"
+            echo "Signing $apk -> dist-apk/GaussBoard-7.0.0-arm64.apk"
+            $APKSIGNER sign --ks release.keystore --ks-pass pass:gaussboard --key-pass pass:gaussboard --out dist-apk/GaussBoard-7.0.0-arm64.apk "$apk"
             break
           done
           
           echo "--- Verifying signature ---"
-          $APKSIGNER verify -v dist-apk/GaussBoard-1.0.0-arm64.apk
+          $APKSIGNER verify -v dist-apk/GaussBoard-7.0.0-arm64.apk
 
       - name: Upload Android APK Artifacts
         uses: actions/upload-artifact@v4
