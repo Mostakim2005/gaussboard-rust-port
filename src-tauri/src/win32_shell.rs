@@ -64,7 +64,7 @@ pub fn spawn_win32_clipboard_listener(app: tauri::AppHandle) {
             0,
             0,
             0,
-            HWND_MESSAGE, // Invisible message-only window
+            Some(HWND_MESSAGE), // Invisible message-only window
             None,
             None,
             None,
