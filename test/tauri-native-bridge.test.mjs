@@ -59,6 +59,21 @@ test('tauri-board bridge exposes archive, search, geometry, audioInspect and pow
           if (cmd === 'get_power_status') {
             return { on_battery: false, battery_percent: 98, power_saver: false };
           }
+          if (cmd === 'search_audio_to_ink') {
+            return [{ board_id: 'b1', session_id: 's1', matched_word: 'Ohm', audio_seek_ms: 1200, stroke_id: 'strk_1', camera_center_x: 100, camera_center_y: 200, bbox_width: 50, bbox_height: 30 }];
+          }
+          if (cmd === 'record_stroke_temporal_map') {
+            return args.strokes.length;
+          }
+          if (cmd === 'index_audio_transcript') {
+            return args.tokens.length;
+          }
+          if (cmd === 'export_board_high_res_png') {
+            return true;
+          }
+          if (cmd === 'apply_window_mica') {
+            return true;
+          }
           return { ok: true };
         }
       },
@@ -159,4 +174,33 @@ test('tauri-board bridge exposes archive, search, geometry, audioInspect and pow
   const powerStatus = await board.power.getStatus();
   assert.equal(powerStatus.battery_percent, 98);
   assert.equal(calls[calls.length - 1].cmd, 'get_power_status');
+
+  // 9. Audio-to-Ink Temporal Search & Indexing API
+  const audioInkHits = await board.search.searchAudioToInk('Ohm', 10);
+  assert.equal(audioInkHits[0].matched_word, 'Ohm');
+  assert.equal(calls[calls.length - 1].cmd, 'search_audio_to_ink');
+
+  const recordedCount = await board.search.recordStrokeTiming('b1', 's1', [
+    { stroke_id: 'strk_1', t_start_ms: 1000, t_end_ms: 1500, center_x: 100, center_y: 200, width: 50, height: 30 }
+  ]);
+  assert.equal(recordedCount, 1);
+  assert.equal(calls[calls.length - 1].cmd, 'record_stroke_temporal_map');
+
+  const indexedTokens = await board.search.indexAudioTranscript('b1', 's1', [
+    { word: 'Ohm', start_ms: 1000, end_ms: 1400 }
+  ]);
+  assert.equal(indexedTokens, 1);
+  assert.equal(calls[calls.length - 1].cmd, 'index_audio_transcript');
+
+  // 10. High-DPI Tiled PNG Export API
+  assert.ok(board.export, 'board.export must exist');
+  const exported = await board.export.exportHighResPng('C:/out.png', 4096, 4096, 2.0, []);
+  assert.equal(exported, true);
+  assert.equal(calls[calls.length - 1].cmd, 'export_board_high_res_png');
+
+  // 11. Win32 Mica Styling API
+  assert.ok(board.window, 'board.window must exist');
+  const micaApplied = await board.window.applyMica(true);
+  assert.equal(micaApplied, true);
+  assert.equal(calls[calls.length - 1].cmd, 'apply_window_mica');
 });

@@ -1,3 +1,5 @@
+import { HardwareAudioClock } from './audio-clock.js';
+
 export class AudioRecorder {
   constructor({ onTimeUpdate = null, onLevelUpdate = null, onStateChange = null } = {}) {
     this.onTimeUpdate = onTimeUpdate;
@@ -7,6 +9,7 @@ export class AudioRecorder {
     this.stream = null;
     this.recorder = null;
     this.audioCtx = null;
+    this.clock = null;
     this.analyser = null;
     this.meterAnim = null;
     this.sessionId = null;
@@ -41,11 +44,14 @@ export class AudioRecorder {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (AudioContextClass) {
         this.audioCtx = new AudioContextClass();
+        this.clock = new HardwareAudioClock(this.audioCtx);
         const source = this.audioCtx.createMediaStreamSource(this.stream);
         this.analyser = this.audioCtx.createAnalyser();
         this.analyser.fftSize = 64;
         source.connect(this.analyser);
         this.startMeter();
+      } else {
+        this.clock = new HardwareAudioClock(null);
       }
 
       // Not every build accepts the explicit WebM/Opus type; asking for the
@@ -86,6 +92,7 @@ export class AudioRecorder {
   /** Stop the capture stream, meter and session file; safe to call twice. */
   async releaseCapture() {
     this.stopMeter();
+    this.clock = null;
     if (this.analyser) { try { this.analyser.disconnect?.(); } catch {} this.analyser = null; }
     if (this.stream) {
       try { this.stream.getTracks().forEach((t) => t.stop()); } catch {}
@@ -107,6 +114,7 @@ export class AudioRecorder {
   pause() {
     if (this.state !== 'recording') return;
     this.recorder.pause();
+    this.clock?.pause();
     this.elapsedOffsetMs += (performance.now() - this.segmentStartMs);
     this.state = 'paused';
     if (this.onStateChange) this.onStateChange(this.state);
@@ -115,6 +123,7 @@ export class AudioRecorder {
   resume() {
     if (this.state !== 'paused') return;
     this.segmentStartMs = performance.now();
+    this.clock?.resume();
     this.recorder.resume();
     this.state = 'recording';
     if (this.onStateChange) this.onStateChange(this.state);
@@ -181,6 +190,7 @@ export class AudioRecorder {
   }
 
   currentOffsetMs() {
+    if (this.clock) return this.clock.nowMs();
     if (this.state === 'idle') return 0;
     if (this.state === 'paused') return Math.round(this.elapsedOffsetMs);
     return Math.round(this.elapsedOffsetMs + (performance.now() - this.segmentStartMs));

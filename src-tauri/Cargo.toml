@@ -64,6 +64,17 @@ palette = { version = "0.7", default-features = false, features = ["std", "seria
 # Linear-Time CommonMark & Math/Table Document Parser
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 
+# Zero-Copy Struct Casting & Concurrency Channels
+bytemuck = { version = "1.18", features = ["derive"] }
+crossbeam-channel = "0.5"
+
+# Pure-Rust Audio DSP Denoising (Neural RNNoise in Safe Rust)
+nnnoiseless = "0.5"
+
+# Pure-Rust SIMD 2D Rasterizer & Streaming PNG Encoder for 16K Tiled Exports
+tiny-skia = { version = "0.11", default-features = false, features = ["simd", "std"] }
+png = "0.17"
+
 # Desktop-only plugins
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2.2"
@@ -74,6 +85,8 @@ windows = { version = "0.62", features = [
     "Win32_System_Com",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Foundation",
-    "Win32_System_Power"
+    "Win32_System_Power",
+    "Win32_Graphics_Dwm",
+    "Win32_System_DataExchange"
 ] }
 webview2-com = "0.39"

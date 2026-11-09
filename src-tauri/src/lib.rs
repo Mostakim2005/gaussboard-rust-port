@@ -1,10 +1,12 @@
 // src-tauri/src/lib.rs
 pub mod assets;
+pub mod audio_dsp;
 pub mod audio_inspect;
 pub mod bundle;
 pub mod clipboard;
 pub mod colorimetry;
 pub mod converter;
+pub mod export_engine;
 pub mod geometry;
 pub mod lan_sync;
 pub mod lease;
@@ -17,6 +19,7 @@ pub mod search;
 pub mod splash;
 pub mod state;
 pub mod storage;
+pub mod win32_shell;
 
 use crate::{lan_sync::LanSyncManager, state::AppState};
 use serde_json::{json, Value};
@@ -154,6 +157,7 @@ pub fn run() {
             app.manage(db_pool);
 
             splash::init_splash_bypass_and_watchdog(app.handle());
+            win32_shell::spawn_win32_clipboard_listener(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -229,15 +233,21 @@ pub fn run() {
             bundle::bundle_import,
             audio_inspect::audio_inspect,
             geometry::stroke_simplify_and_fit,
+            geometry::binary_simplify_stroke,
             search::search_index_board,
             search::search_delete_board,
             search::search_boards,
+            search::search_audio_to_ink,
+            search::record_stroke_temporal_map,
+            search::index_audio_transcript,
             search::graph_record_links,
             search::graph_get_backlinks,
             search::study_card_upsert,
             search::study_cards_due,
             search::search_index_pdf,
             search::pdf_extract_full_text,
+            export_engine::export_board_high_res_png,
+            win32_shell::apply_window_mica,
             colorimetry::color_wcag_contrast,
             colorimetry::color_oklch_mix,
             colorimetry::color_invert_theme_ink,

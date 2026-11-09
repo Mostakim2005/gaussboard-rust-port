@@ -431,3 +431,18 @@ flowchart LR
 * **Why This Trap Exists (Plain English):** `BezPath` does not implement `ParamCurveArclen` directly because paths can contain discontinuities (`MoveTo`) and mixed segment types (lines, quadratic Béziers, and cubic Béziers). Calling `.arclen()` directly on `BezPath` results in compiler error `E0599`. Iterating over `.segments()` handles every segment type analytically.
 * **Protected Code Anchors (Grep Targets):**
   * `src-tauri/src/geometry.rs` -> `ParamCurveArclen`, `bez_path.segments()`
+
+### [TRAP: RNNoise-Sample-Amplitude-Scaling] | Aliases: nnnoiseless, RNNoise, amplitude scaling, voice muting
+> **1-Line Summary:** WebAudio float samples are in `[-1.0, 1.0]`, while RNNoise internally expects `f32` scaled to 16-bit signed integer range `[-32768.0, 32767.0]` in exact 480-sample frames at 48 kHz.
+* **Strict Rule:** Always scale samples by `sample * 32767.0` before passing into `DenoiseState::process_frame`, and divide by `32768.0` on output.
+* **Why This Trap Exists (Plain English):** RNNoise's internal neural GRU Voice Activity Detector was trained on 16-bit integer amplitudes. If raw `[-1.0, 1.0]` WebAudio floats are fed in directly, the network treats the input as near-zero silence and completely mutes the user's voice.
+* **Protected Code Anchors (Grep Targets):**
+  * `src-tauri/src/audio_dsp.rs` -> `LectureAudioPipeline::process_chunk`
+
+### [TRAP: Event-Driven-Win32-Clipboard-Sequence] | Aliases: AddClipboardFormatListener, GetClipboardSequenceNumber, HWND_MESSAGE
+> **1-Line Summary:** Polling the clipboard on window focus misses clipboard updates triggered while the window is focused; use `AddClipboardFormatListener` with `GetClipboardSequenceNumber` on an invisible `HWND_MESSAGE` window.
+* **Strict Rule:** Never poll `GetClipboardSequenceNumber()` in a timer loop or solely on window focus; register a native listener thread and emit `board://clipboard-seq` on `WM_CLIPBOARDUPDATE`.
+* **Why This Trap Exists (Plain English):** Opening the clipboard repeatedly via `OpenClipboard()` can cause lock contention with other Windows applications. `GetClipboardSequenceNumber()` is an $O(1)$ non-locking kernel counter, and `WM_CLIPBOARDUPDATE` fires instantly when any process copies data, guaranteeing accurate cache updates without polling latency.
+* **Protected Code Anchors (Grep Targets):**
+  * `src-tauri/src/win32_shell.rs` -> `spawn_win32_clipboard_listener`
+  * `src/js/platform/tauri-board.js` -> `cachedClipboardSig`

@@ -25,6 +25,13 @@
   window.addEventListener('focus', refreshClipboardSignature, true);
   window.addEventListener('copy', () => setTimeout(refreshClipboardSignature, 20), true);
   window.addEventListener('cut', () => setTimeout(refreshClipboardSignature, 20), true);
+  if (window.__TAURI__?.event?.listen) {
+    try {
+      window.__TAURI__.event.listen('board://clipboard-seq', (e) => {
+        cachedClipboardSig = 'seq:' + e.payload;
+      });
+    } catch {}
+  }
   refreshClipboardSignature();
 
   function toByteArray(buf) {
@@ -186,7 +193,23 @@
       indexPdf: (boardId, title, filePath, tags) =>
         invoke('search_index_pdf', { boardId, title, filePath, tags: tags || null }),
       extractPdfText: (filePath) =>
-        invoke('pdf_extract_full_text', { filePath })
+        invoke('pdf_extract_full_text', { filePath }),
+      searchAudioToInk: (query, limit) =>
+        invoke('search_audio_to_ink', { query, limit: typeof limit === 'number' ? limit : null }),
+      recordStrokeTiming: (boardId, sessionId, strokes) =>
+        invoke('record_stroke_temporal_map', { boardId, sessionId, strokes: Array.isArray(strokes) ? strokes : [] }),
+      indexAudioTranscript: (boardId, sessionId, tokens) =>
+        invoke('index_audio_transcript', { boardId, sessionId, tokens: Array.isArray(tokens) ? tokens : [] })
+    },
+
+    export: {
+      exportHighResPng: (outputPath, fullWidth, fullHeight, scale, strokes) =>
+        invoke('export_board_high_res_png', { outputPath, fullWidth, fullHeight, scale, strokes })
+    },
+
+    window: {
+      applyMica: (darkMode) =>
+        invoke('apply_window_mica', { darkMode: darkMode !== false })
     },
 
     colorimetry: {

@@ -1,6 +1,10 @@
 // src-tauri/src/search.rs
+// Embedded SQLite engine with FTS5 trigram search, knowledge graph backlinks,
+// FSRS v5 spaced repetition, PDF indexing, and bidirectional audio-to-ink search bridge.
+
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::State;
@@ -19,6 +23,8 @@ pub fn init_search_db(data_dir: PathBuf) -> Result<DbPool, String> {
         "PRAGMA journal_mode = WAL;
          PRAGMA synchronous = NORMAL;
          PRAGMA temp_store = MEMORY;
+         PRAGMA mmap_size = 268435456;
+         PRAGMA busy_timeout = 5000;
          PRAGMA cache_size = -32000;
 
          -- 1. Trigram Full-Text Search Virtual Table
@@ -30,7 +36,33 @@ pub fn init_search_db(data_dir: PathBuf) -> Result<DbPool, String> {
              tokenize = 'trigram'
          );
 
-         -- 2. Knowledge Graph Nodes and Edges
+         -- 2. Audio Transcript FTS5 Virtual Table
+         CREATE VIRTUAL TABLE IF NOT EXISTS audio_fts USING fts5(
+             board_id UNINDEXED,
+             session_id UNINDEXED,
+             word,
+             start_ms UNINDEXED,
+             end_ms UNINDEXED,
+             tokenize = 'trigram'
+         );
+
+         -- 3. Stroke Temporal Map Table for Speech-to-Ink Linking
+         CREATE TABLE IF NOT EXISTS stroke_temporal_map (
+             board_id TEXT NOT NULL,
+             session_id TEXT NOT NULL,
+             stroke_id TEXT NOT NULL,
+             t_start_ms INTEGER NOT NULL,
+             t_end_ms INTEGER NOT NULL,
+             center_x REAL NOT NULL,
+             center_y REAL NOT NULL,
+             width REAL NOT NULL,
+             height REAL NOT NULL,
+             PRIMARY KEY (board_id, stroke_id)
+         );
+         CREATE INDEX IF NOT EXISTS idx_stroke_session_time
+             ON stroke_temporal_map (board_id, session_id, t_start_ms, t_end_ms);
+
+         -- 4. Knowledge Graph Nodes and Edges
          CREATE TABLE IF NOT EXISTS graph_nodes (
              id TEXT PRIMARY KEY,
              board_id TEXT NOT NULL,
@@ -46,7 +78,7 @@ pub fn init_search_db(data_dir: PathBuf) -> Result<DbPool, String> {
              PRIMARY KEY (source_id, target_id, edge_type)
          );
 
-         -- 3. Spaced Repetition (SRS) Flashcards
+         -- 5. Spaced Repetition (SRS) Flashcards
          CREATE TABLE IF NOT EXISTS study_cards (
              card_id TEXT PRIMARY KEY,
              board_id TEXT NOT NULL,
@@ -69,6 +101,37 @@ pub struct SearchHit {
     pub title: String,
     pub snippet: String,
     pub rank: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AudioInkSearchHit {
+    pub board_id: String,
+    pub session_id: String,
+    pub matched_word: String,
+    pub audio_seek_ms: i64,
+    pub stroke_id: String,
+    pub camera_center_x: f32,
+    pub camera_center_y: f32,
+    pub bbox_width: f32,
+    pub bbox_height: f32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AudioTokenInput {
+    pub word: String,
+    pub start_ms: i64,
+    pub end_ms: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct StrokeTimingInput {
+    pub stroke_id: String,
+    pub t_start_ms: i64,
+    pub t_end_ms: i64,
+    pub center_x: f32,
+    pub center_y: f32,
+    pub width: f32,
+    pub height: f32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -99,14 +162,10 @@ pub fn search_index_board(
     // Remove existing entries for this board to update cleanly
     let _ = conn.execute("DELETE FROM board_fts WHERE board_id = ?", [&board_id]);
 
+    let tag_str = tags.unwrap_or_default();
     conn.execute(
-        "INSERT INTO board_fts(board_id, title, content, tags) VALUES (?, ?, ?, ?)",
-        [
-            &board_id,
-            &title,
-            &content,
-            &tags.unwrap_or_default(),
-        ],
+        "INSERT INTO board_fts (board_id, title, content, tags) VALUES (?1, ?2, ?3, ?4)",
+        [&board_id, &title, &content, &tag_str],
     )
     .map_err(|e| format!("Failed to index board: {}", e))?;
 
@@ -120,7 +179,11 @@ pub fn search_delete_board(pool: State<'_, DbPool>, board_id: String) -> Result<
         .map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM graph_nodes WHERE board_id = ?", [&board_id])
         .map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM study_cards WHERE board_id = ?", [&board_id])
+    conn.execute("DELETE FROM graph_edges WHERE source_id = ? OR target_id = ?", [&board_id, &board_id])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM stroke_temporal_map WHERE board_id = ?", [&board_id])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM audio_fts WHERE board_id = ?", [&board_id])
         .map_err(|e| e.to_string())?;
     Ok(true)
 }
@@ -132,25 +195,24 @@ pub fn search_boards(
     limit: Option<usize>,
 ) -> Result<Vec<SearchHit>, String> {
     let conn = pool.get().map_err(|e| e.to_string())?;
-    let max_results = limit.unwrap_or(50).clamp(1, 200);
+    let lim = limit.unwrap_or(20);
 
-    let trimmed = query.trim();
-    if trimmed.is_empty() {
-        return Ok(Vec::new());
-    }
+    // Escape query tokens or wrap for trigram search
+    let safe_query = query.replace('"', "\"\"");
+    let fts_query = format!("\"{}\"", safe_query);
 
     let mut stmt = conn
         .prepare(
-            "SELECT board_id, title, snippet(board_fts, 2, '<mark>', '</mark>', '...', 25), bm25(board_fts)
-             FROM board_fts 
-             WHERE board_fts MATCH ? 
-             ORDER BY bm25(board_fts) 
-             LIMIT ?",
+            "SELECT board_id, title, snippet(board_fts, 2, '<b>', '</b>', '...', 15) as snip, rank
+             FROM board_fts
+             WHERE board_fts MATCH ?1
+             ORDER BY rank
+             LIMIT ?2",
         )
-        .map_err(|e| format!("Query preparation failed: {}", e))?;
+        .map_err(|e| e.to_string())?;
 
     let rows = stmt
-        .query_map([trimmed, &max_results.to_string()], |row| {
+        .query_map(params![fts_query, lim as i64], |row| {
             Ok(SearchHit {
                 board_id: row.get(0)?,
                 title: row.get(1)?,
@@ -158,16 +220,146 @@ pub fn search_boards(
                 rank: row.get(3)?,
             })
         })
-        .map_err(|e| format!("Query execution failed: {}", e))?;
+        .map_err(|e| e.to_string())?;
 
-    Ok(rows.flatten().collect())
+    let mut results = Vec::new();
+    for hit in rows.flatten() {
+        results.push(hit);
+    }
+    Ok(results)
 }
 
-#[derive(Deserialize)]
-pub struct GraphLinkInput {
-    pub target_board_id: String,
-    pub target_title: String,
-    pub edge_type: String,
+#[tauri::command]
+pub fn search_audio_to_ink(
+    pool: State<'_, DbPool>,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<AudioInkSearchHit>, String> {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    let lim = limit.unwrap_or(25);
+
+    let safe_query = query.replace('"', "\"\"");
+    let fts_query = format!("\"{}\"", safe_query);
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT
+                a.board_id,
+                a.session_id,
+                a.word,
+                a.start_ms,
+                s.stroke_id,
+                s.center_x,
+                s.center_y,
+                s.width,
+                s.height
+             FROM audio_fts a
+             JOIN stroke_temporal_map s
+               ON s.board_id = a.board_id
+              AND s.session_id = a.session_id
+              AND s.t_end_ms >= (a.start_ms - 1500)
+              AND s.t_start_ms <= (a.end_ms + 3500)
+             WHERE audio_fts MATCH ?1
+             ORDER BY ABS(((s.t_start_ms + s.t_end_ms) / 2) - ((a.start_ms + a.end_ms) / 2)) ASC
+             LIMIT ?2",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(params![fts_query, lim as i64], |row| {
+            Ok(AudioInkSearchHit {
+                board_id: row.get(0)?,
+                session_id: row.get(1)?,
+                matched_word: row.get(2)?,
+                audio_seek_ms: row.get(3)?,
+                stroke_id: row.get(4)?,
+                camera_center_x: row.get(5)?,
+                camera_center_y: row.get(6)?,
+                bbox_width: row.get(7)?,
+                bbox_height: row.get(8)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut hits = Vec::new();
+    for row in rows.flatten() {
+        hits.push(row);
+    }
+    Ok(hits)
+}
+
+#[tauri::command]
+pub fn record_stroke_temporal_map(
+    pool: State<'_, DbPool>,
+    board_id: String,
+    session_id: String,
+    strokes: Vec<StrokeTimingInput>,
+) -> Result<usize, String> {
+    let mut conn = pool.get().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    let mut inserted = 0;
+    {
+        let mut stmt = tx
+            .prepare(
+                "INSERT OR REPLACE INTO stroke_temporal_map (
+                    board_id, session_id, stroke_id, t_start_ms, t_end_ms, center_x, center_y, width, height
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            )
+            .map_err(|e| e.to_string())?;
+
+        for s in &strokes {
+            stmt.execute(params![
+                &board_id,
+                &session_id,
+                &s.stroke_id,
+                s.t_start_ms,
+                s.t_end_ms,
+                s.center_x,
+                s.center_y,
+                s.width,
+                s.height
+            ])
+            .map_err(|e| e.to_string())?;
+            inserted += 1;
+        }
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(inserted)
+}
+
+#[tauri::command]
+pub fn index_audio_transcript(
+    pool: State<'_, DbPool>,
+    board_id: String,
+    session_id: String,
+    tokens: Vec<AudioTokenInput>,
+) -> Result<usize, String> {
+    let mut conn = pool.get().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    // Clear previous transcript tokens for this session
+    let _ = tx.execute(
+        "DELETE FROM audio_fts WHERE board_id = ? AND session_id = ?",
+        [&board_id, &session_id],
+    );
+
+    let mut count = 0;
+    {
+        let mut stmt = tx
+            .prepare("INSERT INTO audio_fts (board_id, session_id, word, start_ms, end_ms) VALUES (?1, ?2, ?3, ?4, ?5)")
+            .map_err(|e| e.to_string())?;
+
+        for t in &tokens {
+            stmt.execute(params![&board_id, &session_id, &t.word, t.start_ms, t.end_ms])
+                .map_err(|e| e.to_string())?;
+            count += 1;
+        }
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(count)
 }
 
 #[tauri::command]
@@ -175,7 +367,7 @@ pub fn graph_record_links(
     pool: State<'_, DbPool>,
     board_id: String,
     board_title: String,
-    links: Vec<GraphLinkInput>,
+    targets: Vec<String>,
 ) -> Result<bool, String> {
     let mut conn = pool.get().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
@@ -186,26 +378,23 @@ pub fn graph_record_links(
         .as_millis() as i64;
 
     tx.execute(
-        "INSERT OR REPLACE INTO graph_nodes(id, board_id, node_type, label, updated_at) VALUES (?, ?, 'board', ?, ?)",
-        [&board_id, &board_id, &board_title, &now.to_string()],
-    )
-    .map_err(|e| e.to_string())?;
+        "INSERT INTO graph_nodes (id, board_id, node_type, label, updated_at)
+         VALUES (?1, ?1, 'board', ?2, ?3)
+         ON CONFLICT(id) DO UPDATE SET label = excluded.label, updated_at = excluded.updated_at",
+        params![board_id, board_title, now],
+    ).map_err(|e| e.to_string())?;
 
-    tx.execute("DELETE FROM graph_edges WHERE source_id = ?", [&board_id])
+    tx.execute("DELETE FROM graph_edges WHERE source_id = ?1", params![board_id])
         .map_err(|e| e.to_string())?;
 
-    for link in links {
-        tx.execute(
-            "INSERT OR IGNORE INTO graph_nodes(id, board_id, node_type, label, updated_at) VALUES (?, ?, 'board', ?, ?)",
-            [&link.target_board_id, &link.target_board_id, &link.target_title, &now.to_string()],
-        )
-        .map_err(|e| e.to_string())?;
-
-        tx.execute(
-            "INSERT OR REPLACE INTO graph_edges(source_id, target_id, edge_type) VALUES (?, ?, ?)",
-            [&board_id, &link.target_board_id, &link.edge_type],
-        )
-        .map_err(|e| e.to_string())?;
+    for target in targets {
+        if target != board_id {
+            tx.execute(
+                "INSERT OR IGNORE INTO graph_edges (source_id, target_id, edge_type)
+                 VALUES (?1, ?2, 'wikilink')",
+                params![board_id, target],
+            ).map_err(|e| e.to_string())?;
+        }
     }
 
     tx.commit().map_err(|e| e.to_string())?;
@@ -218,26 +407,27 @@ pub fn graph_get_backlinks(
     board_id: String,
 ) -> Result<Vec<BacklinkResult>, String> {
     let conn = pool.get().map_err(|e| e.to_string())?;
-    let mut stmt = conn
-        .prepare(
-            "SELECT n.board_id, n.label, e.edge_type 
-             FROM graph_edges e
-             JOIN graph_nodes n ON e.source_id = n.id
-             WHERE e.target_id = ?",
-        )
-        .map_err(|e| e.to_string())?;
 
-    let rows = stmt
-        .query_map([&board_id], |row| {
-            Ok(BacklinkResult {
-                source_board_id: row.get(0)?,
-                source_title: row.get(1)?,
-                edge_type: row.get(2)?,
-            })
+    let mut stmt = conn.prepare(
+        "SELECT n.board_id, n.label, e.edge_type
+         FROM graph_edges e
+         JOIN graph_nodes n ON n.id = e.source_id
+         WHERE e.target_id = ?1",
+    ).map_err(|e| e.to_string())?;
+
+    let rows = stmt.query_map(params![board_id], |row| {
+        Ok(BacklinkResult {
+            source_board_id: row.get(0)?,
+            source_title: row.get(1)?,
+            edge_type: row.get(2)?,
         })
-        .map_err(|e| e.to_string())?;
+    }).map_err(|e| e.to_string())?;
 
-    Ok(rows.flatten().collect())
+    let mut results = Vec::new();
+    for item in rows.flatten() {
+        results.push(item);
+    }
+    Ok(results)
 }
 
 #[tauri::command]
@@ -250,11 +440,11 @@ pub fn study_card_upsert(
 ) -> Result<bool, String> {
     let conn = pool.get().map_err(|e| e.to_string())?;
     conn.execute(
-        "INSERT INTO study_cards(card_id, board_id, prompt, due_timestamp) VALUES (?, ?, ?, ?)
+        "INSERT INTO study_cards (card_id, board_id, prompt, due_timestamp)
+         VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(card_id) DO UPDATE SET due_timestamp = excluded.due_timestamp, prompt = excluded.prompt",
-        [&card_id, &board_id, &prompt, &due_timestamp.to_string()],
-    )
-    .map_err(|e| e.to_string())?;
+        params![card_id, board_id, prompt, due_timestamp],
+    ).map_err(|e| e.to_string())?;
     Ok(true)
 }
 
@@ -265,32 +455,94 @@ pub fn study_cards_due(
     limit: Option<usize>,
 ) -> Result<Vec<DueCardResult>, String> {
     let conn = pool.get().map_err(|e| e.to_string())?;
-    let max = limit.unwrap_or(50).clamp(1, 200);
+    let lim = limit.unwrap_or(50);
+    let mut stmt = conn.prepare(
+        "SELECT card_id, board_id, prompt, due_timestamp
+         FROM study_cards
+         WHERE due_timestamp <= ?1
+         ORDER BY due_timestamp ASC
+         LIMIT ?2",
+    ).map_err(|e| e.to_string())?;
 
-    let mut stmt = conn
-        .prepare(
-            "SELECT card_id, board_id, prompt, due_timestamp 
-             FROM study_cards 
-             WHERE due_timestamp <= ? 
-             ORDER BY due_timestamp ASC 
-             LIMIT ?",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let rows = stmt
-        .query_map([now_timestamp.to_string(), max.to_string()], |row| {
-            Ok(DueCardResult {
-                card_id: row.get(0)?,
-                board_id: row.get(1)?,
-                prompt: row.get(2)?,
-                due_timestamp: row.get(3)?,
-            })
+    let rows = stmt.query_map(params![now_timestamp, lim as i64], |row| {
+        Ok(DueCardResult {
+            card_id: row.get(0)?,
+            board_id: row.get(1)?,
+            prompt: row.get(2)?,
+            due_timestamp: row.get(3)?,
         })
-        .map_err(|e| e.to_string())?;
+    }).map_err(|e| e.to_string())?;
 
-    Ok(rows.flatten().collect())
+    let mut results = Vec::new();
+    for card in rows.flatten() {
+        results.push(card);
+    }
+    Ok(results)
 }
 
+#[tauri::command]
+pub fn srs_schedule_card(
+    pool: State<'_, DbPool>,
+    card_id: String,
+    board_id: String,
+    prompt: String,
+    interval_days: f64,
+    stability: f64,
+    difficulty: f64,
+) -> Result<bool, String> {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    let due = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64 + (interval_days * 86400.0) as i64;
+
+    conn.execute(
+        "INSERT INTO study_cards (card_id, board_id, prompt, due_timestamp, reps, stability, difficulty)
+         VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6)
+         ON CONFLICT(card_id) DO UPDATE SET
+            due_timestamp = excluded.due_timestamp,
+            reps = reps + 1,
+            stability = excluded.stability,
+            difficulty = excluded.difficulty",
+        params![card_id, board_id, prompt, due, stability, difficulty],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn srs_get_due_cards(
+    pool: State<'_, DbPool>,
+) -> Result<Vec<DueCardResult>, String> {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    let mut stmt = conn.prepare(
+        "SELECT card_id, board_id, prompt, due_timestamp
+         FROM study_cards
+         WHERE due_timestamp <= ?1
+         ORDER BY due_timestamp ASC
+         LIMIT 100",
+    ).map_err(|e| e.to_string())?;
+
+    let rows = stmt.query_map(params![now], |row| {
+        Ok(DueCardResult {
+            card_id: row.get(0)?,
+            board_id: row.get(1)?,
+            prompt: row.get(2)?,
+            due_timestamp: row.get(3)?,
+        })
+    }).map_err(|e| e.to_string())?;
+
+    let mut results = Vec::new();
+    for card in rows.flatten() {
+        results.push(card);
+    }
+    Ok(results)
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PdfIndexSummary {

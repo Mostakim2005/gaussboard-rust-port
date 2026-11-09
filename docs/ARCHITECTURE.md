@@ -271,24 +271,27 @@ flowchart LR
   * `src-tauri/Cargo.toml` -> `[lib]`, `crate-type = ["staticlib", "cdylib", "rlib"]`
   * `src-tauri/src/lib.rs` -> `#[cfg_attr(mobile, tauri::mobile_entry_point)]`
 
-### [SUBSYSTEM: Rust-Native-Robustness-Suite] | Aliases: zip bundle, rusqlite FTS5, symphonia, kurbo, colorimetry, markdown_parser, power, single-instance
-> **1-Line Summary:** Native Rust high-performance engine extensions integrating streaming multi-gigabyte ZIP archiving with SHA-256 validation, sub-millisecond SQLite FTS5 trigram search and PDF deep-indexing, pure-Rust audio duration inspection, kurbo Bezier curve fitting with timestamp preservation, WCAG 2.1 contrast checking, Oklch ink blending, CommonMark/KaTeX parser, and single-instance safety.
+### [SUBSYSTEM: Rust-Native-Robustness-Suite] | Aliases: zip bundle, rusqlite FTS5, symphonia, kurbo, colorimetry, markdown_parser, power, audio_dsp, export_engine, win32_shell
+> **1-Line Summary:** Native Rust high-performance engine extensions integrating streaming multi-gigabyte ZIP archiving with SHA-256 validation, sub-millisecond SQLite FTS5 trigram search, bidirectional speech-to-ink search with asymmetric temporal lookahead, pure-Rust audio duration inspection, safe RNNoise neural noise suppression, kurbo Bézier curve fitting with timestamp preservation, 16K horizontal strip tiled export, Win32 Mica Alt styling, WCAG 2.1 contrast checking, Oklch ink blending, CommonMark/KaTeX parser, and single-instance safety.
 * **How It Works (Plain English):** The Rust backend complements the Vanilla ES6 canvas with heavy lifting operations running in background threads:
   1. `bundle.rs` streams multi-gigabyte `.gaussboard` packages using `zip` and `flate2`/`zstd` in 64KB/128KB chunks with zero V8 heap memory bloat and ZipSlip security checks.
-  2. `search.rs` uses an embedded SQLite WAL database with trigram FTS5 (`board_fts`) to index math tokens (`\frac`, `\int`), text objects, FSRS v5 card review schedules, and extracts PDF page-by-page text via `pdf-extract`.
+  2. `search.rs` uses an embedded SQLite WAL database with trigram FTS5 (`board_fts` and `audio_fts`) to index math tokens (`\frac`, `\int`), text objects, speech transcripts, and temporal stroke coordinates (`stroke_temporal_map`), supporting bidirectional speech-to-ink jumping with asymmetric `[-1.5s, +3.5s]` lookahead.
   3. `audio_inspect.rs` uses pure-Rust `symphonia` to probe audio files in <1ms without spinning up browser media elements, strictly satisfying TRAP 3.
-  4. `geometry.rs` applies RDP simplification and Catmull-Rom to Cubic Bezier spline fitting via `kurbo`, strictly preserving stroke point timestamps `p.t` (TRAP 2).
-  5. `colorimetry.rs` performs WCAG 2.1 relative luminance and contrast verification (AA/AAA), perceptual ink blending in Oklch color space, and dark/light mode canvas ink inversion via `palette`.
-  6. `markdown_parser.rs` executes safe $O(N)$ CommonMark parsing via `pulldown-cmark` with support for GFM tables, footnotes, task lists, and KaTeX math blocks (`$...$`, `$$...$$`).
-  7. `power.rs` queries hardware battery level and AC status via Windows `GetSystemPowerStatus`.
-  8. `single-instance` and `global-shortcut` provide OS-level focus switching and quick scratchpad toggling.
+  4. `audio_dsp.rs` processes microphone audio frames through pure-Rust `nnnoiseless::DenoiseState`, scaling amplitudes to eliminate HVAC hum and stylus clicks, and decimating 3:1 (48 kHz -> 16 kHz) for speech transcription.
+  5. `geometry.rs` applies index-preserving RDP simplification and Catmull-Rom to Cubic Bezier spline fitting via `kurbo`, strictly preserving stroke point timestamps `p.t` (TRAP 2), with zero-copy binary IPC support.
+  6. `export_engine.rs` streams 16K high-DPI PNG exports using horizontal strip tiling (constant 32 MB RAM) via `tiny-skia` and `png`.
+  7. `win32_shell.rs` applies Windows 11 Mica Alt (`DWMWA_SYSTEMBACKDROP_TYPE = 4`) and listens for `WM_CLIPBOARDUPDATE` via an invisible `HWND_MESSAGE` window, feeding the synchronous clipboard signature cache.
+  8. `colorimetry.rs` performs WCAG 2.1 relative luminance and contrast verification (AA/AAA), perceptual ink blending in Oklch color space, and dark/light mode canvas ink inversion via `palette`.
+  9. `markdown_parser.rs` executes safe $O(N)$ CommonMark parsing via `pulldown-cmark` with support for GFM tables, footnotes, task lists, and KaTeX math blocks (`$...$`, `$$...$$`).
+  10. `power.rs` queries hardware battery level and AC status via Windows `GetSystemPowerStatus`.
+  11. `single-instance` and `global-shortcut` provide OS-level focus switching and quick scratchpad toggling.
 * **Data Flow Diagram:**
 ```mermaid
 flowchart TD
     subgraph UI ["Vanilla ES6 Frontend"]
         Canvas["Canvas Inking & Stroke Capture"]
-        SearchUI["Quick Search & Graph Views"]
-        AudioUI["Audio Recording Waveform"]
+        SearchUI["Quick Search & Audio-to-Ink Views"]
+        AudioUI["Audio Recording Waveform & Clock"]
         MarkdownUI["Markdown Cards & KaTeX Preview"]
         PaletteUI["Ink Palette & Theme Switcher"]
     end
@@ -299,28 +302,39 @@ flowchart TD
 
     subgraph RustEngines ["Native Rust Robustness Engines"]
         ArchiveEng["bundle.rs (zip + flate2/zstd + SHA-256)"]
-        SearchEng["search.rs (rusqlite + trigram FTS5 + PDF)"]
+        SearchEng["search.rs (rusqlite + trigram FTS5 + Audio-to-Ink)"]
         AudioEng["audio_inspect.rs (symphonia duration/codec)"]
-        GeomEng["geometry.rs (kurbo RDP + Bezier + AABB)"]
+        DspEng["audio_dsp.rs (nnnoiseless neural denoiser)"]
+        GeomEng["geometry.rs (kurbo RDP + Bezier + Bytemuck)"]
+        ExportEng["export_engine.rs (tiny-skia 16K Strip Tiler)"]
+        ShellEng["win32_shell.rs (Win11 Mica Alt + ClipWatcher)"]
         ColorEng["colorimetry.rs (palette Oklch + WCAG 2.1)"]
         MdEng["markdown_parser.rs (pulldown-cmark + KaTeX)"]
         PowerEng["power.rs (Windows PowerStatus / Battery)"]
     end
 
-    Canvas -->|stroke_simplify_and_fit| GeomEng
-    SearchUI -->|search_boards / index_pdf| SearchEng
+    Canvas -->|stroke_simplify_and_fit / binary| GeomEng
+    SearchUI -->|search_boards / search_audio_to_ink| SearchEng
     AudioUI -->|audio_inspect| AudioEng
+    AudioUI -->|audio_dsp| DspEng
     MarkdownUI -->|markdown_to_html| MdEng
     PaletteUI -->|color_contrast_check / oklch_blend| ColorEng
     Bridge --> ArchiveEng
+    Bridge --> ExportEng
+    Bridge --> ShellEng
     Bridge --> PowerEng
 ```
 * **Code Anchors (Grep Targets):**
   * `src-tauri/src/bundle.rs` -> `bundle_export`, `bundle_import`
-  * `src-tauri/src/search.rs` -> `init_search_db`, `search_boards`, `index_pdf_pages`
+  * `src-tauri/src/search.rs` -> `init_search_db`, `search_boards`, `search_audio_to_ink`, `record_stroke_temporal_map`
   * `src-tauri/src/audio_inspect.rs` -> `audio_inspect`, `symphonia`
-  * `src-tauri/src/geometry.rs` -> `stroke_simplify_and_fit`, `simplify_rdp`
+  * `src-tauri/src/audio_dsp.rs` -> `LectureAudioPipeline`, `DenoiseState`
+  * `src-tauri/src/geometry.rs` -> `stroke_simplify_and_fit`, `binary_simplify_stroke`
+  * `src-tauri/src/export_engine.rs` -> `export_16k_png_streamed`, `export_board_high_res_png`
+  * `src-tauri/src/win32_shell.rs` -> `apply_win11_mica_alt`, `spawn_win32_clipboard_listener`
   * `src-tauri/src/colorimetry.rs` -> `color_contrast_check`, `oklch_blend`, `invert_ink_colors`
   * `src-tauri/src/markdown_parser.rs` -> `markdown_to_html`
   * `src-tauri/src/power.rs` -> `get_power_status`
-  * `src/js/platform/tauri-board.js` -> `window.board.archive`, `window.board.search`, `window.board.geometry`, `window.board.colorimetry`, `window.board.markdown`
+  * `src/js/core/audio-clock.js` -> `HardwareAudioClock`
+  * `src/js/core/replay.js` -> `drawTimedBezierAtClock`, `jumpToAudioInkHit`, `onStrokeAltClickSeekAudio`
+  * `src/js/platform/tauri-board.js` -> `window.board.archive`, `window.board.search`, `window.board.geometry`, `window.board.colorimetry`, `window.board.markdown`, `window.board.export`, `window.board.window`

@@ -427,3 +427,73 @@ export class ReplayEngine {
     }
   }
 }
+
+/**
+ * Smooth partial Bézier evaluation for TRAP 1 & TRAP 2.
+ * Evaluates a cubic segment parameterized by audio time using De Casteljau subdivision.
+ */
+export function drawTimedBezierAtClock(ctx, seg, currentAudioMs) {
+  if (currentAudioMs < seg.t_start) return;
+
+  if (currentAudioMs >= seg.t_end) {
+    ctx.bezierCurveTo(seg.p1[0], seg.p1[1], seg.p2[0], seg.p2[1], seg.p3[0], seg.p3[1]);
+    return;
+  }
+
+  // Normalize playback clock into curve parameter u in (0.0, 1.0)
+  const u = (currentAudioMs - seg.t_start) / Math.max(1, seg.t_end - seg.t_start);
+  const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+
+  // De Casteljau subdivision for left sub-curve [0, u]
+  const q0 = lerp(seg.p0, seg.p1, u);
+  const q1 = lerp(seg.p1, seg.p2, u);
+  const q2 = lerp(seg.p2, seg.p3, u);
+  const r0 = lerp(q0, q1, u);
+  const r1 = lerp(q1, q2, u);
+  const s0 = lerp(r0, r1, u);
+
+  ctx.bezierCurveTo(q0[0], q0[1], r0[0], r0[1], s0[0], s0[1]);
+}
+
+/**
+ * Connects speech search hit to canvas camera and audio scrubber.
+ */
+export function jumpToAudioInkHit(surface, replayEngine, hit) {
+  if (!hit) return;
+  // 1. Seek audio player to exact spoken word timestamp
+  if (replayEngine?.seekToMs && hit.session_id && hit.audio_seek_ms != null) {
+    replayEngine.seekToMs(hit.session_id, hit.audio_seek_ms);
+  }
+
+  // 2. Smoothly pan & zoom Canvas 2D camera to frame the matched stroke
+  if (surface && hit.camera_center_x != null && hit.camera_center_y != null) {
+    const w = surface.width || 800;
+    const h = surface.height || 600;
+    const targetZoom = Math.min(
+      2.5,
+      Math.max(0.5, Math.min(w / Math.max(10, hit.bbox_width * 3), h / Math.max(10, hit.bbox_height * 3)))
+    );
+    if (typeof surface.animateCameraTo === 'function') {
+      surface.animateCameraTo(hit.camera_center_x, hit.camera_center_y, targetZoom, 420);
+    } else if (surface.camera?.panTo) {
+      surface.camera.panTo(hit.camera_center_x, hit.camera_center_y);
+    }
+  }
+
+  // 3. Pulse highlight halo around the target stroke
+  if (surface?.flashStrokeHighlight && hit.stroke_id) {
+    surface.flashStrokeHighlight(hit.stroke_id, 1500);
+  }
+}
+
+/**
+ * Tap a stroke while holding Alt to immediately seek audio to when the stroke was inked.
+ */
+export function onStrokeAltClickSeekAudio(stroke, replayEngine) {
+  if (!stroke?.audioId && !stroke?.sessionId) return;
+  const sid = stroke.sessionId || stroke.audioId;
+  const firstTimestampMs = stroke.points?.[0]?.t ?? stroke.t0;
+  if (typeof firstTimestampMs === 'number' && replayEngine?.seekToMs) {
+    replayEngine.seekToMs(sid, firstTimestampMs);
+  }
+}
