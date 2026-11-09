@@ -1,5 +1,5 @@
 // diagrams.js — Offline Mermaid & Chart.js engine for GazBoard Visualization Studio
-// Invariant: Pure portable JavaScript, offline-first, zero native node-gyp dependencies.
+// Invariant: Modular JavaScript frontend, offline-first; heavy native compute offloaded to Rust/native host.
 
 let mermaidPromise = null;
 let chartJsPromise = null;

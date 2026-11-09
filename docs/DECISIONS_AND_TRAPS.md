@@ -3,27 +3,30 @@
 
 ## 1. Architectural Decisions & Pivot History
 
-### [DECISION: Pure-JS-Zero-Native-Deps] | Aliases: no node-gyp, no C++, Electron, offline vendor
-> **1-Line Summary:** Stayed with pure portable JavaScript and vendored libraries instead of adding any native C++ addon.
+### [DECISION: Multi-Language-Cloud-CI-Native-Acceleration] | Aliases: C/C++, Rust, Zig, node-gyp evolution, Cloud CI, native acceleration
+> **1-Line Summary:** Evolved from Electron's legacy pure-JS restriction to embracing high-performance Rust, C, C++, and Zig native acceleration compiled seamlessly in GitHub Actions Cloud CI.
 * **Decision Maker:** `[DECIDED BY: HUMAN - Project Owner]`
-* **Original User Intention:** Lightweight portable Windows app that builds on any machine with no toolchain friction.
+* **Original User Intention:** Accelerate whiteboard performance, inking math, audio DSP, and document parsing by leveraging the best available open-source libraries in any language without imposing local compiler bloat on developers.
 * **Options Considered:**
-  * **Option A (Rejected):** Native node-gyp addons for inking, crypto, or PDF engines. Rejected because every missing compiler or arch change breaks the build and violates the offline no-supply-chain promise.
-  * **Option B (Chosen):** Pure JS in `src/js/core/ink.js` -> `fitBezier`, `src/js/core/circuit-sim.js` -> `solveMNA`, `sync/protocol.js` -> `sealMessage` with Node built-in crypto, and 15 vendors under `src/vendor/` resolved via `src/vendor/libraries.json`.
+  * **Option A (Legacy Electron Baseline):** Restrict everything to pure JavaScript to avoid `node-gyp` toolchain friction during local `npm install`. Kept in the frontend JS layer to maintain modular web standards.
+  * **Option B (Tauri v2 + Cloud CI Evolution):** With compilation offloaded to automated GitHub Actions runners (`windows-latest` with MSVC and `ubuntu-latest` with Android NDK 27 Clang/CMake), native C/C++/Rust/Zig crates compile frictionlessly into the host executable and Android shared libraries. Pure JS remains for UI, while native engines handle heavy compute.
 * **Visual Pivot Map (What Failed vs. What Works):**
 ```mermaid
 flowchart LR
-    subgraph Failed["❌ Old Approach (Failed)"]
-        A1[Native Addon] --> A2[Build breaks, supply chain grows]
+    subgraph Legacy["❌ Legacy Electron Constraint"]
+        A1[Local node-gyp] --> A2[Missing MSVC/Python breaks build]
+        A2 --> A3[Forced JS-only compromises]
     end
-    subgraph Active["✅ Current Approach (Works)"]
-        B1[Vendored Pure JS] --> B2[Offline, portable, testable]
+    subgraph Active["✅ Cloud CI Native Acceleration"]
+        B1[Tauri + Cargo + C/C++ FFI] --> B2[GitHub Cloud Actions compile MSVC/NDK]
+        B2 --> B3[Portable .exe + Signed APK with zero local bloat]
     end
 ```
 * **Code Anchors (Grep Targets):**
-  * `src/js/core/ink.js` -> `fitBezier`
-  * `src/vendor/libraries.json` -> `bundledPath`
-  * `sync/protocol.js` -> `createPairingCode`
+  * `AGENTS.md` -> `TRAP 5: Multi-Language Cloud CI Compilation Invariant`
+  * `src-tauri/Cargo.toml` -> native crate dependencies
+  * `.github/workflows/tauri-release.yml` -> Windows MSVC build
+  * `.github/workflows/tauri-android.yml` -> Android NDK Clang build
 
 ### [DECISION: Op-Log-Checkpoint-Seam] | Aliases: checkpoint, applyRemote, onOp, undo stack, collab seam
 > **1-Line Summary:** Kept the editor on an operation log with checkpoint and applyRemote so LAN sync and future collaboration need no editor changes.

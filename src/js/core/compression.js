@@ -1,5 +1,5 @@
 // compression.js — Offline Image & PDF compression engine for GazBoard
-// Invariant: Pure portable JavaScript, offline-first, zero native node-gyp dependencies.
+// Invariant: Modular JavaScript frontend, offline-first; heavy native compute offloaded to Rust/native host.
 
 /**
  * Calculates byte size of a data URL or string.

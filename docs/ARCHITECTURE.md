@@ -205,11 +205,12 @@ See SUBSYSTEM sections above: Dual-Runtime-Platform, Document-Model-Op-Log, Inki
   2. Register palette in `src/js/ui/toolbar.js` -> `ribbon`
   3. Add render case in `src/js/core/render.js` -> `renderObject`
   4. Verify with `node scripts/smoke.js --new-features` and `node scripts/i18n-check.js`
-* **To add a new STEM engine:**
-  1. Keep it pure JS with no node-gyp dependency and check `src/js/core/ink.js` -> `preserveTime` style purity
-  2. Vendor the library under `src/vendor/` and register it in `src/vendor/libraries.json` -> `bundledPath`
-  3. Wire the card in `src/js/ui/sidebar-ribbon.js` -> `InsertMenu` with 1-click ribbon pinning
-  4. Verify with `node scripts/smoke.js --new-features` and `node scripts/i18n-check.js`
+* **To add a new STEM engine or native compute extension:**
+  1. For frontend canvas tools, keep it modular ES6 and check `src/js/core/ink.js` -> `preserveTime` style timestamp preservation.
+  2. For heavy computational processing, vector rasterization, or native media manipulation, implement a native command in `src-tauri/src/` (using Rust, C, C++, or Zig libraries compiled via Cargo and Cloud CI) and expose it via `src/js/platform/tauri-board.js`.
+  3. If vendoring a frontend library, place it under `src/vendor/` and register in `src/vendor/libraries.json` -> `bundledPath`.
+  4. Wire the card in `src/js/ui/sidebar-ribbon.js` -> `InsertMenu` with 1-click ribbon pinning.
+  5. Verify with `node scripts/smoke.js --new-features` and `node scripts/i18n-check.js`.
 * **To add a new locale:**
   1. Create `src/locales/<code>.json` with the English sentence as key
   2. Register in `src/js/i18n.js` -> `LANGUAGES`
