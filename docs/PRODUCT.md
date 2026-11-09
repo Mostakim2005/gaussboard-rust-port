@@ -175,14 +175,21 @@
 * **Visual / UI Behavior:** Instant search across all `.gaussboard` notes and embedded PDF pages; lossless archive export and import with SHA-256 integrity; seamless dark/light mode canvas ink inversion with WCAG AAA contrast safety; and smooth Catmull-Rom Bézier spline rendering without dropping audio timestamp anchors (`p.t`).
 * **Code Anchors (Grep Targets):**
   * `src-tauri/src/bundle.rs` -> `bundle_export`, `bundle_import`
-  * `src-tauri/src/search.rs` -> `init_search_db`, `search_boards`, `index_pdf_pages`
+  * `src-tauri/src/search.rs` -> `init_search_db`, `search_boards`, `search_audio_to_ink`, `record_stroke_temporal_map`
   * `src-tauri/src/audio_inspect.rs` -> `audio_inspect`
-  * `src-tauri/src/geometry.rs` -> `stroke_simplify_and_fit`
+  * `src-tauri/src/audio_dsp.rs` -> `LectureAudioPipeline`, `DenoiseState`
+  * `src-tauri/src/geometry.rs` -> `stroke_simplify_and_fit`, `binary_simplify_stroke`, `RawInkPoint`, `TimedBezierSegment`
+  * `src-tauri/src/export_engine.rs` -> `export_16k_png_streamed`, `export_board_high_res_png`
+  * `src-tauri/src/win32_shell.rs` -> `apply_win11_mica_alt`, `spawn_win32_clipboard_listener`
   * `src-tauri/src/colorimetry.rs` -> `color_contrast_check`, `oklch_blend`, `invert_ink_colors`
   * `src-tauri/src/markdown_parser.rs` -> `markdown_to_html`
   * `src-tauri/src/power.rs` -> `get_power_status`
-  * `src/js/platform/tauri-board.js` -> `window.board.archive`, `window.board.search`, `window.board.geometry`, `window.board.colorimetry`, `window.board.markdown`
+  * `src/js/core/audio-clock.js` -> `HardwareAudioClock`
+  * `src/js/core/replay.js` -> `drawTimedBezierAtClock`, `jumpToAudioInkHit`, `onStrokeAltClickSeekAudio`
+  * `src/js/platform/tauri-board.js` -> `window.board.archive`, `window.board.search`, `window.board.geometry`, `window.board.colorimetry`, `window.board.markdown`, `window.board.export`, `window.board.window`
   * `test/tauri-native-bridge.test.mjs` -> `tauri-board bridge suite`
+  * `test/audio-clock.test.mjs` -> `HardwareAudioClock suite`
+  * `test/replay-timed-bezier.test.mjs` -> `timed Bezier replay suite`
 
 
 ## 3. Planned Features & App-Merge Wishlist

@@ -446,3 +446,10 @@ flowchart LR
 * **Protected Code Anchors (Grep Targets):**
   * `src-tauri/src/win32_shell.rs` -> `spawn_win32_clipboard_listener`
   * `src/js/platform/tauri-board.js` -> `cachedClipboardSig`
+
+### [TRAP: Windows-Crate-0.62-CreateWindowExW-HWND-Option] | Aliases: windows crate 0.62, CreateWindowExW, HWND_MESSAGE, Option<HWND>
+> **1-Line Summary:** In `windows` crate 0.62+, `CreateWindowExW` signature requires `hWndParent` to be typed as `Option<HWND>`, so message-only parent windows must be passed as `Some(HWND_MESSAGE)`.
+* **Strict Rule:** Always wrap `HWND_MESSAGE` inside `Some(HWND_MESSAGE)` when calling `CreateWindowExW` under modern `windows` crate versions.
+* **Why This Trap Exists (Plain English):** In earlier versions of Microsoft's `windows` crate, raw handles were accepted directly or wrapped in default handles. Under version 0.62, function parameter signatures strictly mandate `Option<HWND>`. Passing bare `HWND_MESSAGE` causes rustc to emit compile error `E0308: mismatched types: expected Option<HWND>, found HWND`.
+* **Protected Code Anchors (Grep Targets):**
+  * `src-tauri/src/win32_shell.rs` -> `CreateWindowExW`, `Some(HWND_MESSAGE)`
