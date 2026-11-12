@@ -172,7 +172,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          name: GaussBoard [Rust-Tauri] ${{ github.ref_name }} (Branches: ${{ needs.discover-branches.outputs.summary }})
+          name: "GaussBoard [Rust-Tauri] ${{ github.ref_name }} (Branches: ${{ needs.discover-branches.outputs.summary }})"
           files: dist-apk/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
