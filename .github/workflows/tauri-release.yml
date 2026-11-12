@@ -38,7 +38,6 @@ jobs:
             if (!ref || ref === 'origin/HEAD' || ref === 'origin') continue;
             const branch = ref.replace(/^origin\//, '');
 
-            // Only build branches that contain the Tauri Rust crate
             try {
               execSync(`git cat-file -e ${fullSha}:src-tauri/Cargo.toml`, { stdio: 'ignore' });
             } catch {
@@ -64,7 +63,6 @@ jobs:
             }
           }
 
-          // Sort so 'main' comes first
           const items = Array.from(bySha.values()).map((entry) => {
             entry.branches.sort((a, b) => (a === 'main' ? -1 : b === 'main' ? 1 : a.localeCompare(b)));
             const joinedBranch = entry.branches.join('+');
@@ -81,9 +79,10 @@ jobs:
           });
 
           const summary = items.map((i) => `${i.branch}@${i.short_sha}`).join(', ');
-          console.log('Discovered deduplicated Rust/Tauri branches:', items);
+          const matrixObj = { include: items };
+          console.log('Discovered deduplicated Rust/Tauri branches:', matrixObj);
 
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify(items)}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify(matrixObj)}\n`);
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `summary=${summary}\n`);
           EOF
 
@@ -92,13 +91,12 @@ jobs:
     runs-on: windows-latest
     strategy:
       fail-fast: false
-      matrix:
-        target: ${{ fromJson(needs.discover-branches.outputs.matrix) }}
+      matrix: ${{ fromJson(needs.discover-branches.outputs.matrix) }}
     steps:
-      - name: Checkout branch (${{ matrix.target.branch }} @ ${{ matrix.target.short_sha }})
+      - name: Checkout branch (${{ matrix.branch }} @ ${{ matrix.short_sha }})
         uses: actions/checkout@v4
         with:
-          ref: ${{ matrix.target.full_sha }}
+          ref: ${{ matrix.full_sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -124,9 +122,9 @@ jobs:
       - name: Rename binaries with Engine, Version, Branch, and Commit SHA
         shell: bash
         env:
-          VERSION: ${{ matrix.target.version }}
-          SLUG: ${{ matrix.target.slug }}
-          SHA: ${{ matrix.target.short_sha }}
+          VERSION: ${{ matrix.version }}
+          SLUG: ${{ matrix.slug }}
+          SHA: ${{ matrix.short_sha }}
         run: |
           set -euo pipefail
           mkdir -p dist-release
@@ -148,10 +146,10 @@ jobs:
 
           ls -lh dist-release/
 
-      - name: Upload Windows artifacts (${{ matrix.target.slug }})
+      - name: Upload Windows artifacts (${{ matrix.slug }})
         uses: actions/upload-artifact@v4
         with:
-          name: GaussBoard-Rust-Tauri-Windows-${{ matrix.target.slug }}-${{ matrix.target.short_sha }}
+          name: GaussBoard-Rust-Tauri-Windows-${{ matrix.slug }}-${{ matrix.short_sha }}
           path: dist-release/*
           if-no-files-found: error
 
