@@ -357,3 +357,88 @@ flowchart LR
 * **Protected Code Anchors (Grep Targets):**
   * `package.json` -> `"tauri": "tauri"`
   * `.github/workflows/tauri-android.yml` -> `npm run tauri android init`
+
+
+### [TRAP: Tauri-Mobile-Platform-Capability-Isolation] | Aliases: desktop.json, global-shortcut:default, Permission not found
+> **1-Line Summary:** Desktop-only Tauri plugins must have their capability permissions isolated in a separate capability JSON with `platforms: ["windows", "linux", "macOS"]` so mobile build tools (`tauri-build` on Android) do not fail with missing permission schema errors.
+* **Strict Rule:** **NEVER** put desktop-only permissions (such as `global-shortcut:default` or `single-instance`) in `src-tauri/capabilities/default.json` without platform filtering, and **NEVER** use the generic string `"desktop"` in the platforms array (use explicit OS names `["windows", "linux", "macOS"]`).
+* **Why This Trap Exists (Plain English):** Tauri v2 validates all declared capability permissions at compile time against registered plugins. If `default.json` requests `global-shortcut:default` on an Android target, `tauri-build` throws a fatal error because the global shortcut plugin is only compiled for desktop targets. Furthermore, the capability JSON parser requires exact OS enum variants (`"windows"`, `"linux"`, `"macOS"`, `"android"`, `"iOS"`). Passing `"desktop"` causes `tauri-build` to fail with `failed to parse JSON: unknown variant desktop`.
+* **Protected Code Anchors (Grep Targets):**
+  * `src-tauri/capabilities/desktop.json` -> `"platforms": ["windows", "linux", "macOS"]`
+  * `src-tauri/capabilities/default.json` -> `"permissions"`
+
+### [TRAP: Lopdf-Manual-Dependency-Conflict] | Aliases: lopdf, pdf-extract, nom crate missing, pure-Rust PDF
+> **1-Line Summary:** Never add an explicit minimal `lopdf` crate entry with `default-features = false` alongside `pdf-extract`; doing so strips the `nom` parser crate and breaks compilation.
+* **Strict Rule:** Let `pdf-extract = "0.12"` manage its own internal dependencies, or ensure features include the required parsers.
+* **Why This Trap Exists (Plain English):** `pdf-extract` relies on `lopdf` with its full parser feature set. Manually forcing `lopdf = { version = "0.35", default-features = false }` disables `nom`, causing rustc to fail during compilation of `lopdf` with `cannot find module or crate nom in this scope`.
+* **Protected Code Anchors (Grep Targets):**
+  * `src-tauri/Cargo.toml` -> `pdf-extract`
+  * `src-tauri/src/search.rs` -> `pdf_extract::extract_text`
+
+### [TRAP: Palette-Clamp-Trait-Scope] | Aliases: palette, Clamp trait, Srgb clamp, colorimetry
+> **1-Line Summary:** Calling `.clamp()` on `palette::Srgb` requires importing `use palette::Clamp;` to satisfy trait bounds.
+* **Strict Rule:** Always import `use palette::Clamp;` whenever clamping color channel components in `colorimetry.rs`.
+* **Why This Trap Exists (Plain English):** In the `palette` crate, color structs do not implement `std::cmp::Ord` because floating-point values have `NaN` and `PartialOrd` only. Attempting to call `.clamp(min, max)` without bringing `palette::Clamp` into scope causes the Rust compiler to search for standard library methods and fail with `the method clamp exists for struct Rgb, but its trait bounds were not satisfied: Rgb: std::cmp::Ord`.
+* **Protected Code Anchors (Grep Targets):**
+  * `src-tauri/src/colorimetry.rs` -> `use palette::Clamp;`
+
+### [TRAP: ZipWriter-Writer-Trait-Bounds-And-Verification] | Aliases: ZipWriter, Seek trait, HashingWriter, bundle_export
+> **1-Line Summary:** ZipWriter requires `W: Write + Seek`; custom stream wrappers without complete seek implementations must not wrap the archive writer, and verification hashes must be computed from the finalized archive file.
+* **Strict Rule:** Pass `BufWriter<File>` directly to `ZipWriter::new(buf_writer)`, call `zip.finish()?.into_inner()?.flush()`, and compute SHA-256 and byte sizes by streaming the completed archive from disk.
+* **Why This Trap Exists (Plain English):** The ZIP format writes local file entries and then seeks backwards to patch header sizes and write the central directory table at the end of the file. A non-seeking or linear streaming hashing wrapper violates `ZipWriter`'s `Seek` trait bound, and hashing during seeks corrupts the cryptographic digest. Streaming the completed archive on disk guarantees 100% cryptographic accuracy.
+* **Protected Code Anchors (Grep Targets):**
+  * `src-tauri/src/bundle.rs` -> `ZipWriter::new(buf_writer)`, `check_file`
+
+### [TRAP: Kurbo-BezPath-Arc-Length-Decomposition] | Aliases: BezPath, arclen, ParamCurveArclen, kurbo
+> **1-Line Summary:** `kurbo::BezPath` is a sequence of path commands rather than a continuous curve; arc length must be computed by iterating over path segments with `ParamCurveArclen`.
+* **Strict Rule:** Use `use kurbo::ParamCurveArclen;` and compute total path length via `bez_path.segments().map(|seg| seg.arclen(tolerance)).sum::<f64>()`.
+* **Why This Trap Exists (Plain English):** `BezPath` does not implement `ParamCurveArclen` directly because paths can contain discontinuities (`MoveTo`) and mixed segment types (lines, quadratic Béziers, and cubic Béziers). Calling `.arclen()` directly on `BezPath` results in compiler error `E0599`. Iterating over `.segments()` handles every segment type analytically.
+* **Protected Code Anchors (Grep Targets):**
+  * `src-tauri/src/geometry.rs` -> `ParamCurveArclen`, `bez_path.segments()`
+
+### [TRAP: RNNoise-Sample-Amplitude-Scaling] | Aliases: nnnoiseless, RNNoise, amplitude scaling, voice muting
+> **1-Line Summary:** WebAudio float samples are in `[-1.0, 1.0]`, while RNNoise internally expects `f32` scaled to 16-bit signed integer range `[-32768.0, 32767.0]` in exact 480-sample frames at 48 kHz.
+* **Strict Rule:** Always scale samples by `sample * 32767.0` before passing into `DenoiseState::process_frame`, and divide by `32768.0` on output.
+* **Why This Trap Exists (Plain English):** RNNoise's internal neural GRU Voice Activity Detector was trained on 16-bit integer amplitudes. If raw `[-1.0, 1.0]` WebAudio floats are fed in directly, the network treats the input as near-zero silence and completely mutes the user's voice.
+* **Protected Code Anchors (Grep Targets):**
+  * `src-tauri/src/audio_dsp.rs` -> `LectureAudioPipeline::process_chunk`
+
+### [TRAP: Event-Driven-Win32-Clipboard-Sequence] | Aliases: AddClipboardFormatListener, GetClipboardSequenceNumber, HWND_MESSAGE
+> **1-Line Summary:** Polling the clipboard on window focus misses clipboard updates triggered while the window is focused; use `AddClipboardFormatListener` with `GetClipboardSequenceNumber` on an invisible `HWND_MESSAGE` window.
+* **Strict Rule:** Never poll `GetClipboardSequenceNumber()` in a timer loop or solely on window focus; register a native listener thread and emit `board://clipboard-seq` on `WM_CLIPBOARDUPDATE`.
+* **Why This Trap Exists (Plain English):** Opening the clipboard repeatedly via `OpenClipboard()` can cause lock contention with other Windows applications. `GetClipboardSequenceNumber()` is an $O(1)$ non-locking kernel counter, and `WM_CLIPBOARDUPDATE` fires instantly when any process copies data, guaranteeing accurate cache updates without polling latency.
+* **Protected Code Anchors (Grep Targets):**
+  * `src-tauri/src/win32_shell.rs` -> `spawn_win32_clipboard_listener`
+  * `src/js/platform/tauri-board.js` -> `cachedClipboardSig`
+
+### [TRAP: Windows-Crate-0.62-CreateWindowExW-HWND-Option] | Aliases: windows crate 0.62, CreateWindowExW, HWND_MESSAGE, Option<HWND>
+> **1-Line Summary:** In `windows` crate 0.62+, `CreateWindowExW` signature requires `hWndParent` to be typed as `Option<HWND>`, so message-only parent windows must be passed as `Some(HWND_MESSAGE)`.
+* **Strict Rule:** Always wrap `HWND_MESSAGE` inside `Some(HWND_MESSAGE)` when calling `CreateWindowExW` under modern `windows` crate versions.
+* **Why This Trap Exists (Plain English):** In earlier versions of Microsoft's `windows` crate, raw handles were accepted directly or wrapped in default handles. Under version 0.62, function parameter signatures strictly mandate `Option<HWND>`. Passing bare `HWND_MESSAGE` causes rustc to emit compile error `E0308: mismatched types: expected Option<HWND>, found HWND`.
+* **Protected Code Anchors (Grep Targets):**
+  * `src-tauri/src/win32_shell.rs` -> `CreateWindowExW`, `Some(HWND_MESSAGE)`
+
+### [DECISION: Complete-Electron-Removal-And-Multi-Branch-Release-Naming] | Aliases: Electron removal, branch-aware release naming, deduplicated matrix, GaussBoard-Rust-Tauri
+> **1-Line Summary:** Removed all residual Electron/Chromium files and workflows from the Rust port repository and implemented deduplicated multi-branch release workflows (`tauri-release.yml`, `tauri-android.yml`) that stamp every binary with Engine, Version, Branch Slug, and Short Commit SHA.
+* **Decision Maker:** `[DECIDED BY: HUMAN - Project Owner]`
+* **Original User Intention:** Eliminate redundant Electron/Chromium code and workflows from `gaussboard-rust-port` (since Electron lives in the separate `Mostakim2005/GaussBoard` repository), build releases across all active branches without duplicate builds for identical commits, and name every `.exe` / `.msi` / `.apk` with its exact runtime engine, branch, and commit SHA.
+* **Options Considered:**
+  * **Option A (Rejected):** Retain legacy `release.yml` and generic binary names (`gaussboard.exe`, `GaussBoard-v7.0.0-Portable.exe`). Rejected because it mixed Electron and Rust binaries inside the same release and hid which branch/commit produced each artifact.
+  * **Option B (Chosen):** Purge `main.js`, `preload.js`, `updater.js`, `zsync.js`, `storage-location.js`, `soffice.js`, `msoffice.js`, `packaging/`, `android/`, and `release.yml`; run the 24/24 smoke suite directly in Node.js (`scripts/smoke.js`); and add a `discover-branches` matrix job to `tauri-release.yml` and `tauri-android.yml` that deduplicates remote branches by commit SHA and outputs `GaussBoard-Rust-Tauri-v<Version>-branch-<BranchSlug>-<ShortSHA>-<Type>.<ext>`.
+* **Visual Pivot Map (What Failed vs. What Works):**
+```mermaid
+flowchart LR
+    subgraph Confusing["❌ Ambiguous Mixed Releases"]
+        M1["release.yml + tauri-release.yml"] --> M2["Mixed Electron & Rust .exe files"]
+        M2 --> M3["Unknown Source Branch & Commit"]
+    end
+    subgraph Clear["✅ Pure Rust + Self-Identifying Multi-Branch Builds"]
+        C1["discover-branches (SHA Deduplicated)"] --> C2["GaussBoard-Rust-Tauri-vX.Y.Z-branch-<Slug>-<SHA>-Portable.exe"]
+        C1 --> C3["GaussBoard-Rust-Tauri-vX.Y.Z-branch-<Slug>-<SHA>-arm64.apk"]
+    end
+```
+* **Code Anchors (Grep Targets):**
+  * `.github/workflows/tauri-release.yml` -> `discover-branches`, `GaussBoard-Rust-Tauri-v`
+  * `.github/workflows/tauri-android.yml` -> `discover-branches`, `GaussBoard-Rust-Tauri-v`
+  * `scripts/smoke.js` -> `createAppHarness`
+  * `src/js/platform/tauri-board.js` -> `menuLabels`

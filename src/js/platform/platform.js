@@ -1,5 +1,4 @@
-// Platform initialization module for GazBoard.
-// Seamlessly activates the appropriate platform runtime (Electron or Web/PWA).
+// Platform initialization module for GaussBoard Rust Port (Tauri v2 Native Host & Web/PWA fallback).
 
 import { createWebAdapter, emitOpenFile } from './web-adapter.js';
 import { registerSessionFile } from './web-files.js';
@@ -8,9 +7,9 @@ import { createAndroidAdapter } from './android-adapter.js';
 export function initPlatform() {
   if (typeof window === 'undefined') return;
 
-  // 1. Electron Runtime Detection
+  // 1. Tauri v2 Native Runtime Detection
   if (window.board && typeof window.board.info === 'function') {
-    // Electron's preload script has already mounted window.board.
+    // Tauri bridge (tauri-board.js) has already mounted window.board.
     return;
   }
 

@@ -1,43 +1,27 @@
 {
-  "name": "gazboard",
+  "name": "gaussboard-rust-port",
   "productName": "GaussBoard",
-  "version": "6.9.3",
-  "description": "GaussBoard — An offline digital whiteboard & STEM engineering workstation for electrical engineering students, inspired by a combination of StarNote, Flexcil, LiquidText, and Microsoft OneNote.",
-  "main": "main.js",
+  "version": "7.0.0",
+  "description": "GaussBoard (Rust & Tauri v2 Port) — An offline digital whiteboard & STEM engineering workstation for electrical engineering students, powered by Rust native engines and Tauri v2.",
   "scripts": {
-    "start": "electron .",
-    "dev": "electron . --dev",
+    "start": "tauri dev",
+    "dev": "tauri dev",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "build": "tauri build",
     "smoke": "node scripts/smoke.js",
-    "smoke:base": "node scripts/smoke.js --base",
     "smoke:new": "node scripts/smoke.js --new-features",
-    "smoke:custom": "node scripts/smoke-custom.js",
+    "i18n:check": "node scripts/i18n-check.js",
     "smoke:replay": "node --test test/replay-reading.test.mjs test/audio-bar.test.mjs",
     "smoke:video": "node --test test/video-framing.test.mjs",
-    "smoke:features:4.8.4.1": "node scripts/smoke.js --features-4.8.4.1",
-    "smoke:features:4.8.8": "node scripts/smoke.js --features-4.8.8",
-    "smoke:features:5.0.0": "node scripts/smoke.js --features-5.0.0",
-    "smoke:features:5.1.0": "node scripts/smoke.js --features-5.1.0",
-    "smoke:builtin": "node scripts/smoke.js --builtin",
-    "smoke:headless": "node scripts/smoke.js --builtin --headless",
-    "test:restart": "sh test/restart-test.sh",
-    "test:storage": "node --test test/storage-location.test.js",
-    "dist": "electron-builder",
-    "dist:win": "electron-builder --win",
-    "dist:mac": "electron-builder --mac",
-    "dist:linux": "electron-builder --linux",
-    "smoke:mac": "node scripts/smoke.js",
     "build:web": "node scripts/build-web.js",
     "serve:web": "node scripts/serve-web.js",
     "dev:web": "node scripts/serve-web.js",
     "test:web": "npm run build:web && node test/web-pwa.test.js",
-    "test": "npm run smoke",
-    "test:sync": "node test/sync.test.js",
+    "test": "npm run smoke && npm run i18n:check",
     "test:tablet": "node test/tablet-layout.test.js",
     "test:android": "node --test test/android-*.test.js",
-    "test:all": "npm run smoke && npm run test:sync && npm run test:web && npm run test:tablet && npm run test:android",
     "sync:receive": "node scripts/sync-demo.js receive",
     "sync:send": "node scripts/sync-demo.js send",
     "sync:discover": "node scripts/sync-demo.js discover",
@@ -47,10 +31,10 @@
     "name": "Kazi S. Mostakim",
     "email": "kazi.s.mostakim@gmail.com"
   },
-  "homepage": "https://github.com/Mostakim2005/GaussBoard",
+  "homepage": "https://github.com/Mostakim2005/gaussboard-rust-port",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Mostakim2005/GaussBoard.git"
+    "url": "https://github.com/Mostakim2005/gaussboard-rust-port.git"
   },
   "contributors": [
     {
@@ -62,149 +46,18 @@
       "email": "fahim9778@gmail.com"
     }
   ],
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "devDependencies": {
-    "electron": "^43.4.1",
-    "electron-builder": "^26.15.3",
+    "@tauri-apps/cli": "^2.1.0",
+    "@tauri-apps/plugin-global-shortcut": "^2.4.1",
+    "@tauri-apps/plugin-notification": "^2.8.0",
+    "@tauri-apps/plugin-os": "^2.4.0",
     "jszip": "^3.10.1",
     "mammoth": "^1.8.0",
     "pdfjs-dist": "4.10.38",
     "@tauri-apps/cli": "^2.1.0"
   },
-  "build": {
-    "appId": "com.theboringcode.gazboard",
-    "productName": "GaussBoard",
-    "files": [
-      "main.js",
-      "storage-location.js",
-      "preload.js",
-      "soffice.js",
-      "msoffice.js",
-      "src/**/*",
-      "!src/package.json",
-      "sync/**/*",
-      "package.json",
-      "!test/out/**",
-      "updater.js",
-      "zsync.js"
-    ],
-    "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ],
-      "icon": "src/assets/icon.ico",
-      "legalTrademarks": "theBoringCodes",
-      "signtoolOptions": {
-        "publisherName": "theBoringCodes"
-      }
-    },
-    "mac": {
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        }
-      ],
-      "category": "public.app-category.productivity",
-      "icon": "src/assets/icon.icns",
-      "identity": "-",
-      "hardenedRuntime": false,
-      "darkModeSupport": true,
-      "extendInfo": {
-        "NSHighResolutionCapable": true,
-        "LSMinimumSystemVersion": "11.0"
-      }
-    },
-    "linux": {
-      "target": [
-        "AppImage",
-        "deb"
-      ],
-      "category": "Office",
-      "icon": "src/assets/icon.png",
-      "synopsis": "Offline whiteboard with Word / PowerPoint / PDF import",
-      "description": "A free-form digital whiteboard for pen, sticky notes, shapes, text, images and documents. Runs entirely on your own computer - no account, no sign-in, no cloud.",
-      "maintainer": "theBoringCodes <fahim9778@gmail.com>",
-      "desktop": {
-        "entry": {
-          "Name": "GazBoard",
-          "StartupWMClass": "gazboard"
-        }
-      },
-      "syncDesktopName": true,
-      "extraFiles": [
-        {
-          "from": "packaging/linux/gazboard.appdata.xml",
-          "to": "usr/share/metainfo/gazboard.appdata.xml"
-        }
-      ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "GaussBoard",
-      "uninstallDisplayName": "GaussBoard ${version}",
-      "artifactName": "GaussBoard-Setup-${version}.exe"
-    },
-    "portable": {
-      "artifactName": "GaussBoard-v${version}-Portable.exe"
-    },
-    "fileAssociations": [
-      {
-        "ext": "gazboard",
-        "name": "GazBoard board",
-        "description": "GazBoard whiteboard",
-        "role": "Editor",
-        "icon": "src/assets/icon.ico"
-      },
-      {
-        "ext": "openboard",
-        "name": "GazBoard board (legacy)",
-        "description": "GazBoard whiteboard",
-        "role": "Editor",
-        "icon": "src/assets/icon.ico"
-      }
-    ],
-    "publish": {
-      "provider": "github",
-      "owner": "Mostakim2005",
-      "repo": "GaussBoard",
-      "releaseType": "release"
-    },
-    "dmg": {
-      "title": "GazBoard ${version}",
-      "contents": [
-        {
-          "x": 140,
-          "y": 190,
-          "type": "file"
-        },
-        {
-          "x": 400,
-          "y": 190,
-          "type": "link",
-          "path": "/Applications"
-        }
-      ]
-    }
-  },
-  "desktopName": "gazboard.desktop",
   "dependencies": {
-    "electron-updater": "6.8.10",
     "mp4-muxer": "^5.2.2"
   }
 }

@@ -9,11 +9,92 @@ permissions:
   contents: write
 
 jobs:
-  build-tauri-android:
+  discover-branches:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.scan.outputs.matrix }}
+      summary: ${{ steps.scan.outputs.summary }}
     steps:
-      - name: Checkout repository
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch all remote branches and deduplicate by commit SHA
+        id: scan
+        run: |
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune
+          node - << 'EOF'
+          const { execSync } = require('node:child_process');
+          const fs = require('node:fs');
+
+          const rawBranches = execSync("git for-each-ref --format='%(refname:short)|%(objectname)|%(objectname:short=7)' refs/remotes/origin/", { encoding: 'utf8' })
+            .trim()
+            .split('\n')
+            .filter(Boolean);
+
+          const bySha = new Map();
+          for (const line of rawBranches) {
+            const [ref, fullSha, shortSha] = line.split('|');
+            if (!ref || ref === 'origin/HEAD' || ref === 'origin') continue;
+            const branch = ref.replace(/^origin\//, '');
+
+            try {
+              execSync(`git cat-file -e ${fullSha}:src-tauri/Cargo.toml`, { stdio: 'ignore' });
+            } catch {
+              console.log(`Skipping branch ${branch} (${shortSha}): no src-tauri/Cargo.toml`);
+              continue;
+            }
+
+            let version = '0.0.0';
+            try {
+              const pkgRaw = execSync(`git show ${fullSha}:package.json`, { encoding: 'utf8' });
+              version = JSON.parse(pkgRaw).version || '0.0.0';
+            } catch {}
+
+            if (!bySha.has(fullSha)) {
+              bySha.set(fullSha, {
+                branches: [branch],
+                full_sha: fullSha,
+                short_sha: shortSha,
+                version
+              });
+            } else {
+              bySha.get(fullSha).branches.push(branch);
+            }
+          }
+
+          const items = Array.from(bySha.values()).map((entry) => {
+            entry.branches.sort((a, b) => (a === 'main' ? -1 : b === 'main' ? 1 : a.localeCompare(b)));
+            const joinedBranch = entry.branches.join('+');
+            const slug = entry.branches
+              .map((b) => b.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, ''))
+              .join('-and-');
+            return {
+              branch: joinedBranch,
+              slug,
+              full_sha: entry.full_sha,
+              short_sha: entry.short_sha,
+              version: entry.version
+            };
+          });
+
+          const summary = items.map((i) => `${i.branch}@${i.short_sha}`).join(', ');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify(items)}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `summary=${summary}\n`);
+          EOF
+
+  build-tauri-android:
+    needs: [discover-branches]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(needs.discover-branches.outputs.matrix) }}
+    steps:
+      - name: Checkout branch (${{ matrix.target.branch }} @ ${{ matrix.target.short_sha }})
         uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.target.full_sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -53,46 +134,43 @@ jobs:
       - name: Initialize Tauri Android project
         run: npm run tauri android init
 
-      - name: Inspect generated BuildTask
-        run: |
-          find src-tauri/gen/android -name "BuildTask.kt" -exec cat {} +
-
       - name: Build Tauri Android APK
         run: npm run tauri android build -- --apk --target aarch64
 
-      - name: Sign Android APK
+      - name: Sign & Rename Android APK with Engine, Version, Branch, and Commit SHA
+        env:
+          VERSION: ${{ matrix.target.version }}
+          SLUG: ${{ matrix.target.slug }}
+          SHA: ${{ matrix.target.short_sha }}
         run: |
-          echo "--- Generating signing keystore ---"
+          set -euo pipefail
           keytool -genkey -v -keystore release.keystore -alias gaussboard -keyalg RSA -keysize 2048 -validity 10000 -storepass gaussboard -keypass gaussboard -dname "CN=GaussBoard, OU=Engineering, O=theBoringCodes, L=City, S=State, C=US"
-          
+
           APKSIGNER=$(find /usr/local/lib/android/sdk/build-tools -name "apksigner" | sort -V | tail -n 1)
-          echo "Using apksigner: $APKSIGNER"
-          
           mkdir -p dist-apk
+          OUT_APK="dist-apk/GaussBoard-Rust-Tauri-v${VERSION}-branch-${SLUG}-${SHA}-arm64.apk"
+
           for apk in $(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk"); do
-            echo "Signing $apk -> dist-apk/GaussBoard-1.0.0-arm64.apk"
-            $APKSIGNER sign --ks release.keystore --ks-pass pass:gaussboard --key-pass pass:gaussboard --out dist-apk/GaussBoard-1.0.0-arm64.apk "$apk"
+            echo "Signing $apk -> $OUT_APK"
+            "$APKSIGNER" sign --ks release.keystore --ks-pass pass:gaussboard --key-pass pass:gaussboard --out "$OUT_APK" "$apk"
             break
           done
-          
-          echo "--- Verifying signature ---"
-          $APKSIGNER verify -v dist-apk/GaussBoard-1.0.0-arm64.apk
 
-      - name: Upload Android APK Artifacts
+          "$APKSIGNER" verify -v "$OUT_APK"
+          ls -lh dist-apk/
+
+      - name: Upload Android APK Artifact (${{ matrix.target.slug }})
         uses: actions/upload-artifact@v4
         with:
-          name: GaussBoard-Rust-Android-APK
-          path: |
-            dist-apk/*.apk
-            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
-          if-no-files-found: warn
+          name: GaussBoard-Rust-Tauri-Android-${{ matrix.target.slug }}-${{ matrix.target.short_sha }}
+          path: dist-apk/*.apk
+          if-no-files-found: error
 
-      - name: Attach APK to GitHub Release
+      - name: Attach signed APK to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist-apk/*.apk
-            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          name: GaussBoard [Rust-Tauri] ${{ github.ref_name }} (Branches: ${{ needs.discover-branches.outputs.summary }})
+          files: dist-apk/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

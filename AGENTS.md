@@ -2,9 +2,9 @@
 > **Notice:** This project inherits user persona, confirmation gates, and documentation blueprints from the global master `AGENTS.md`. Do not duplicate those rules here.
 
 ## 1. Project Tech Stack & Environment
-* **Runtime / Language:** Node.js v20+, Vanilla ES6 JavaScript modules, Electron 43.
-* **Framework / Host:** HTML5 Canvas 2D, Electron Desktop & PWA Web Adapter (zero frontend frameworks, zero C++ native addons).
-* **Target OS / Build Output:** Windows x64 portable .exe by default (`dist/`), optional NSIS installer, Linux AppImage/deb, macOS dmg.
+* **Runtime / Language:** Rust 1.80+, Node.js v20+, Vanilla ES6 JavaScript modules; fully open to high-performance C, C++, Rust, Zig, and Wasm native modules.
+* **Framework / Host:** HTML5 Canvas 2D, Tauri v2 Native Desktop & Mobile Host (Edge WebView2 on Windows, System WebView on Android), with PWA web adapter fallback (zero Electron/Chromium dependency; Electron lives exclusively in the upstream `GaussBoard` repository).
+* **Target OS / Build Output:** Windows x64 portable `.exe`, NSIS Setup `.exe`, & `.msi` installer; Android `aarch64` signed release `.apk`. Every cloud release binary uses the self-identifying naming scheme `GaussBoard-Rust-Tauri-v<Version>-branch-<BranchSlug>-<ShortSHA>-<Type>.<ext>` across all deduplicated branches.
 
 ## 2. Mandatory Verification & Build Commands
 * **Active Features Smoke Test (24/24):** `node scripts/smoke.js` (or `node scripts/smoke.js --new-features`)

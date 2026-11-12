@@ -1,7 +1,7 @@
 // src/js/platform/tauri-board.js
 (function initTauriBridge() {
   if (typeof window === 'undefined' || window.board) {
-    return; // Electron preload already provided window.board
+    return; // Native bridge already mounted window.board
   }
   const tauri = window.__TAURI__;
   if (!tauri || !tauri.core || !tauri.event) {
@@ -150,6 +150,95 @@
 
     setLanguage: (code) => invoke('app_set_language', { code }),
     startupStep: (text) => invoke('app_startup_step', { text }),
-    startupDone: (info) => invoke('app_startup_done', { info: info || {} })
+    startupDone: (info) => invoke('app_startup_done', { info: info || {} }),
+
+    archive: {
+      exportBundle: (sourceDir, destZipPath, useZstd) =>
+        invoke('bundle_export', { sourceDir, destZipPath, useZstd: !!useZstd }),
+      importBundle: (archivePath, targetDir) =>
+        invoke('bundle_import', { archivePath, targetDir })
+    },
+
+    audioInspect: {
+      inspect: (filePath) => invoke('audio_inspect', { filePath })
+    },
+
+    geometry: {
+      fitStroke: (points, epsilon) =>
+        invoke('stroke_simplify_and_fit', { points, epsilon: typeof epsilon === 'number' ? epsilon : null })
+    },
+
+    search: {
+      indexBoard: (boardId, title, content, tags) =>
+        invoke('search_index_board', { boardId, title, content, tags: tags || null }),
+      deleteBoard: (boardId) =>
+        invoke('search_delete_board', { boardId }),
+      query: (query, limit) =>
+        invoke('search_boards', { query, limit: typeof limit === 'number' ? limit : null }),
+      recordLinks: (boardId, boardTitle, links) =>
+        invoke('graph_record_links', { boardId, boardTitle, links: Array.isArray(links) ? links : [] }),
+      getBacklinks: (boardId) =>
+        invoke('graph_get_backlinks', { boardId }),
+      upsertCard: (cardId, boardId, prompt, dueTimestamp) =>
+        invoke('study_card_upsert', { cardId, boardId, prompt, dueTimestamp: Number(dueTimestamp) }),
+      getDueCards: (nowTimestamp, limit) =>
+        invoke('study_cards_due', { nowTimestamp: Number(nowTimestamp), limit: typeof limit === 'number' ? limit : null }),
+      indexPdf: (boardId, title, filePath, tags) =>
+        invoke('search_index_pdf', { boardId, title, filePath, tags: tags || null }),
+      extractPdfText: (filePath) =>
+        invoke('pdf_extract_full_text', { filePath }),
+      searchAudioToInk: (query, limit) =>
+        invoke('search_audio_to_ink', { query, limit: typeof limit === 'number' ? limit : null }),
+      recordStrokeTiming: (boardId, sessionId, strokes) =>
+        invoke('record_stroke_temporal_map', { boardId, sessionId, strokes: Array.isArray(strokes) ? strokes : [] }),
+      indexAudioTranscript: (boardId, sessionId, tokens) =>
+        invoke('index_audio_transcript', { boardId, sessionId, tokens: Array.isArray(tokens) ? tokens : [] })
+    },
+
+    export: {
+      exportHighResPng: (outputPath, fullWidth, fullHeight, scale, strokes) =>
+        invoke('export_board_high_res_png', { outputPath, fullWidth, fullHeight, scale, strokes })
+    },
+
+    window: {
+      applyMica: (darkMode) =>
+        invoke('apply_window_mica', { darkMode: darkMode !== false })
+    },
+
+    colorimetry: {
+      wcagContrast: (foregroundHex, backgroundHex) =>
+        invoke('color_wcag_contrast', { foregroundHex, backgroundHex }),
+      oklchMix: (colorAHex, colorBHex, factor) =>
+        invoke('color_oklch_mix', { colorAHex, colorBHex, factor: Number(factor) }),
+      invertThemeInk: (colorHex, targetBgHex, isDarkTarget) =>
+        invoke('color_invert_theme_ink', { colorHex, targetBgHex, isDarkTarget: !!isDarkTarget })
+    },
+
+    markdown: {
+      renderToHtml: (markdown) =>
+        invoke('markdown_to_html', { markdown })
+    },
+
+    power: {
+      getStatus: () => invoke('get_power_status')
+    },
+
+    // Desktop menu labels catalog (retained for 7-locale i18n parity across native host menus)
+    menuLabels: (t) => [
+      t('File'),
+      t('Insert document (Word / PowerPoint / PDF)…'),
+      t('Insert answer cover'),
+      t('Insert link to a board…'),
+      t('Close window'),
+      t('Quit'),
+      t('Edit'),
+      t('View'),
+      t('Format background…'),
+      t('Toggle ruler'),
+      t('Full screen'),
+      t('Maximise window'),
+      t('Developer tools'),
+      t('Help')
+    ]
   };
 })();

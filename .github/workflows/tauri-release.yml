@@ -9,10 +9,96 @@ permissions:
   contents: write
 
 jobs:
-  build-tauri-windows:
-    runs-on: windows-latest
+  discover-branches:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.scan.outputs.matrix }}
+      summary: ${{ steps.scan.outputs.summary }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch all remote branches and deduplicate by commit SHA
+        id: scan
+        run: |
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune
+          node - << 'EOF'
+          const { execSync } = require('node:child_process');
+          const fs = require('node:fs');
+
+          const rawBranches = execSync("git for-each-ref --format='%(refname:short)|%(objectname)|%(objectname:short=7)' refs/remotes/origin/", { encoding: 'utf8' })
+            .trim()
+            .split('\n')
+            .filter(Boolean);
+
+          const bySha = new Map();
+          for (const line of rawBranches) {
+            const [ref, fullSha, shortSha] = line.split('|');
+            if (!ref || ref === 'origin/HEAD' || ref === 'origin') continue;
+            const branch = ref.replace(/^origin\//, '');
+
+            // Only build branches that contain the Tauri Rust crate
+            try {
+              execSync(`git cat-file -e ${fullSha}:src-tauri/Cargo.toml`, { stdio: 'ignore' });
+            } catch {
+              console.log(`Skipping branch ${branch} (${shortSha}): no src-tauri/Cargo.toml`);
+              continue;
+            }
+
+            let version = '0.0.0';
+            try {
+              const pkgRaw = execSync(`git show ${fullSha}:package.json`, { encoding: 'utf8' });
+              version = JSON.parse(pkgRaw).version || '0.0.0';
+            } catch {}
+
+            if (!bySha.has(fullSha)) {
+              bySha.set(fullSha, {
+                branches: [branch],
+                full_sha: fullSha,
+                short_sha: shortSha,
+                version
+              });
+            } else {
+              bySha.get(fullSha).branches.push(branch);
+            }
+          }
+
+          // Sort so 'main' comes first
+          const items = Array.from(bySha.values()).map((entry) => {
+            entry.branches.sort((a, b) => (a === 'main' ? -1 : b === 'main' ? 1 : a.localeCompare(b)));
+            const joinedBranch = entry.branches.join('+');
+            const slug = entry.branches
+              .map((b) => b.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, ''))
+              .join('-and-');
+            return {
+              branch: joinedBranch,
+              slug,
+              full_sha: entry.full_sha,
+              short_sha: entry.short_sha,
+              version: entry.version
+            };
+          });
+
+          const summary = items.map((i) => `${i.branch}@${i.short_sha}`).join(', ');
+          console.log('Discovered deduplicated Rust/Tauri branches:', items);
+
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify(items)}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `summary=${summary}\n`);
+          EOF
+
+  build-tauri-windows:
+    needs: [discover-branches]
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(needs.discover-branches.outputs.matrix) }}
+    steps:
+      - name: Checkout branch (${{ matrix.target.branch }} @ ${{ matrix.target.short_sha }})
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.target.full_sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -35,23 +121,45 @@ jobs:
       - name: Build Tauri app
         run: npm run tauri:build
 
-      - name: Upload Windows artifacts
+      - name: Rename binaries with Engine, Version, Branch, and Commit SHA
+        shell: bash
+        env:
+          VERSION: ${{ matrix.target.version }}
+          SLUG: ${{ matrix.target.slug }}
+          SHA: ${{ matrix.target.short_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist-release
+          PREFIX="GaussBoard-Rust-Tauri-v${VERSION}-branch-${SLUG}-${SHA}"
+
+          if [ -f "src-tauri/target/release/gaussboard.exe" ]; then
+            cp "src-tauri/target/release/gaussboard.exe" "dist-release/${PREFIX}-Portable.exe"
+          fi
+
+          NSIS_EXE="$(find src-tauri/target/release/bundle/nsis -maxdepth 1 -name '*.exe' 2>/dev/null | head -n 1 || true)"
+          if [ -n "$NSIS_EXE" ]; then
+            cp "$NSIS_EXE" "dist-release/${PREFIX}-Setup.exe"
+          fi
+
+          MSI_FILE="$(find src-tauri/target/release/bundle/msi -maxdepth 1 -name '*.msi' 2>/dev/null | head -n 1 || true)"
+          if [ -n "$MSI_FILE" ]; then
+            cp "$MSI_FILE" "dist-release/${PREFIX}-x64.msi"
+          fi
+
+          ls -lh dist-release/
+
+      - name: Upload Windows artifacts (${{ matrix.target.slug }})
         uses: actions/upload-artifact@v4
         with:
-          name: GaussBoard-Rust-Windows
-          path: |
-            src-tauri/target/release/gaussboard.exe
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/msi/*.msi
-          if-no-files-found: warn
+          name: GaussBoard-Rust-Tauri-Windows-${{ matrix.target.slug }}-${{ matrix.target.short_sha }}
+          path: dist-release/*
+          if-no-files-found: error
 
-      - name: Create Release
+      - name: Attach branch binaries to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            src-tauri/target/release/gaussboard.exe
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/msi/*.msi
+          name: GaussBoard [Rust-Tauri] ${{ github.ref_name }} (Branches: ${{ needs.discover-branches.outputs.summary }})
+          files: dist-release/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
