@@ -79,7 +79,10 @@ jobs:
           });
 
           const summary = items.map((i) => `${i.branch}@${i.short_sha}`).join(', ');
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify(items)}\n`);
+          const matrixObj = { include: items };
+          console.log('Discovered deduplicated Rust/Tauri Android branches:', matrixObj);
+
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify(matrixObj)}\n`);
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `summary=${summary}\n`);
           EOF
 
@@ -88,13 +91,12 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        target: ${{ fromJson(needs.discover-branches.outputs.matrix) }}
+      matrix: ${{ fromJson(needs.discover-branches.outputs.matrix) }}
     steps:
-      - name: Checkout branch (${{ matrix.target.branch }} @ ${{ matrix.target.short_sha }})
+      - name: Checkout branch (${{ matrix.branch }} @ ${{ matrix.short_sha }})
         uses: actions/checkout@v4
         with:
-          ref: ${{ matrix.target.full_sha }}
+          ref: ${{ matrix.full_sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -139,9 +141,9 @@ jobs:
 
       - name: Sign & Rename Android APK with Engine, Version, Branch, and Commit SHA
         env:
-          VERSION: ${{ matrix.target.version }}
-          SLUG: ${{ matrix.target.slug }}
-          SHA: ${{ matrix.target.short_sha }}
+          VERSION: ${{ matrix.version }}
+          SLUG: ${{ matrix.slug }}
+          SHA: ${{ matrix.short_sha }}
         run: |
           set -euo pipefail
           keytool -genkey -v -keystore release.keystore -alias gaussboard -keyalg RSA -keysize 2048 -validity 10000 -storepass gaussboard -keypass gaussboard -dname "CN=GaussBoard, OU=Engineering, O=theBoringCodes, L=City, S=State, C=US"
@@ -159,10 +161,10 @@ jobs:
           "$APKSIGNER" verify -v "$OUT_APK"
           ls -lh dist-apk/
 
-      - name: Upload Android APK Artifact (${{ matrix.target.slug }})
+      - name: Upload Android APK Artifact (${{ matrix.slug }})
         uses: actions/upload-artifact@v4
         with:
-          name: GaussBoard-Rust-Tauri-Android-${{ matrix.target.slug }}-${{ matrix.target.short_sha }}
+          name: GaussBoard-Rust-Tauri-Android-${{ matrix.slug }}-${{ matrix.short_sha }}
           path: dist-apk/*.apk
           if-no-files-found: error
 
