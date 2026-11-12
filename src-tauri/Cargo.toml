@@ -37,6 +37,47 @@ url = "2.5"
 mime_guess = "2.0"
 percent-encoding = "2.3"
 hostname = "0.4"
+walkdir = "2.5"
+include_dir = "0.7"
+
+# Native Archive & Streaming Compression
+zip = { version = "2.2", default-features = false, features = ["deflate", "zstd"] }
+
+# Embedded Search & Knowledge Graph Engine
+rusqlite = { version = "0.32", features = ["bundled", "bundled-full"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.25"
+
+# Fast Audio Duration & Metadata
+symphonia = { version = "0.5.4", features = ["all"] }
+
+# Stroke Geometry & Curve Fitting
+kurbo = { version = "0.11", features = ["serde"] }
+
+# PDF Text Extraction & Page Indexing (100% Pure Rust)
+pdf-extract = "0.12"
+
+# Perceptual Colorimetry, Oklch Mixing & WCAG 2.1 Contrast
+palette = { version = "0.7", default-features = false, features = ["std", "serializing"] }
+
+# Linear-Time CommonMark & Math/Table Document Parser
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+
+# Zero-Copy Struct Casting & Concurrency Channels
+bytemuck = { version = "1.18", features = ["derive"] }
+crossbeam-channel = "0.5"
+
+# Pure-Rust Audio DSP Denoising (Neural RNNoise in Safe Rust)
+nnnoiseless = "0.5"
+
+# Pure-Rust SIMD 2D Rasterizer & Streaming PNG Encoder for 16K Tiled Exports
+tiny-skia = { version = "0.11", default-features = false, features = ["simd", "std"] }
+png = "0.17"
+
+# Desktop-only plugins
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2.2"
+tauri-plugin-global-shortcut = "2.2"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
