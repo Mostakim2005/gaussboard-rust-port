@@ -454,6 +454,15 @@ flowchart LR
 * **Protected Code Anchors (Grep Targets):**
   * `src-tauri/src/win32_shell.rs` -> `CreateWindowExW`, `Some(HWND_MESSAGE)`
 
+### [TRAP: Tauri-Custom-Protocol-Release-Asset-Embedding] | Aliases: protocol_app, resolve_src_dir, include_dir, EMBEDDED_SRC, 404 in release
+> **1-Line Summary:** Custom URI protocol handlers (`app://board/`) must embed frontend assets into the binary via `include_dir` rather than reading from `resource_dir()` on disk, or release builds (especially portable single-EXEs) fail with 404 and cannot start.
+* **Strict Rule:** NEVER rely on `std::fs::read` from `app.path().resource_dir()` or relative paths for frontend files (`index.html`, `splash.html`, JS/CSS) in Tauri custom protocol handlers. Embed the entire `../src` directory via `include_dir!("$CARGO_MANIFEST_DIR/../src")` and serve directly from memory in release mode.
+* **Why This Trap Exists (Plain English):** In debug mode (`cfg!(debug_assertions)`), `CARGO_MANIFEST_DIR/../src` exists on the development machine, so filesystem reads work. In release mode, however, a portable `.exe` runs anywhere (e.g. Downloads folder) where no `src` folder exists. If the custom protocol handler queries the filesystem, every file request returns HTTP 404 Not Found, preventing `splash.html` and `index.html` from loading, rendering a dead blank screen.
+* **Protected Code Anchors (Grep Targets):**
+  * `src-tauri/src/protocol_app.rs` -> `EMBEDDED_SRC`, `handle_app_protocol`
+  * `src-tauri/Cargo.toml` -> `include_dir`
+  * `src-tauri/tauri.conf.json` -> `resources`
+
 ### [DECISION: Complete-Electron-Removal-And-Multi-Branch-Release-Naming] | Aliases: Electron removal, branch-aware release naming, deduplicated matrix, GaussBoard-Rust-Tauri
 > **1-Line Summary:** Removed all residual Electron/Chromium files and workflows from the Rust port repository and implemented deduplicated multi-branch release workflows (`tauri-release.yml`, `tauri-android.yml`) that stamp every binary with Engine, Version, Branch Slug, and Short Commit SHA.
 * **Decision Maker:** `[DECIDED BY: HUMAN - Project Owner]`

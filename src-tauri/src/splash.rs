@@ -11,7 +11,7 @@ pub fn init_splash_bypass_and_watchdog<R: Runtime>(app: &AppHandle<R>) {
 
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         reveal_main_and_close_splash(&handle);
     });
 }
