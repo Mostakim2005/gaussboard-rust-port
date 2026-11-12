@@ -453,3 +453,28 @@ flowchart LR
 * **Why This Trap Exists (Plain English):** In earlier versions of Microsoft's `windows` crate, raw handles were accepted directly or wrapped in default handles. Under version 0.62, function parameter signatures strictly mandate `Option<HWND>`. Passing bare `HWND_MESSAGE` causes rustc to emit compile error `E0308: mismatched types: expected Option<HWND>, found HWND`.
 * **Protected Code Anchors (Grep Targets):**
   * `src-tauri/src/win32_shell.rs` -> `CreateWindowExW`, `Some(HWND_MESSAGE)`
+
+### [DECISION: Complete-Electron-Removal-And-Multi-Branch-Release-Naming] | Aliases: Electron removal, branch-aware release naming, deduplicated matrix, GaussBoard-Rust-Tauri
+> **1-Line Summary:** Removed all residual Electron/Chromium files and workflows from the Rust port repository and implemented deduplicated multi-branch release workflows (`tauri-release.yml`, `tauri-android.yml`) that stamp every binary with Engine, Version, Branch Slug, and Short Commit SHA.
+* **Decision Maker:** `[DECIDED BY: HUMAN - Project Owner]`
+* **Original User Intention:** Eliminate redundant Electron/Chromium code and workflows from `gaussboard-rust-port` (since Electron lives in the separate `Mostakim2005/GaussBoard` repository), build releases across all active branches without duplicate builds for identical commits, and name every `.exe` / `.msi` / `.apk` with its exact runtime engine, branch, and commit SHA.
+* **Options Considered:**
+  * **Option A (Rejected):** Retain legacy `release.yml` and generic binary names (`gaussboard.exe`, `GaussBoard-v7.0.0-Portable.exe`). Rejected because it mixed Electron and Rust binaries inside the same release and hid which branch/commit produced each artifact.
+  * **Option B (Chosen):** Purge `main.js`, `preload.js`, `updater.js`, `zsync.js`, `storage-location.js`, `soffice.js`, `msoffice.js`, `packaging/`, `android/`, and `release.yml`; run the 24/24 smoke suite directly in Node.js (`scripts/smoke.js`); and add a `discover-branches` matrix job to `tauri-release.yml` and `tauri-android.yml` that deduplicates remote branches by commit SHA and outputs `GaussBoard-Rust-Tauri-v<Version>-branch-<BranchSlug>-<ShortSHA>-<Type>.<ext>`.
+* **Visual Pivot Map (What Failed vs. What Works):**
+```mermaid
+flowchart LR
+    subgraph Confusing["❌ Ambiguous Mixed Releases"]
+        M1["release.yml + tauri-release.yml"] --> M2["Mixed Electron & Rust .exe files"]
+        M2 --> M3["Unknown Source Branch & Commit"]
+    end
+    subgraph Clear["✅ Pure Rust + Self-Identifying Multi-Branch Builds"]
+        C1["discover-branches (SHA Deduplicated)"] --> C2["GaussBoard-Rust-Tauri-vX.Y.Z-branch-<Slug>-<SHA>-Portable.exe"]
+        C1 --> C3["GaussBoard-Rust-Tauri-vX.Y.Z-branch-<Slug>-<SHA>-arm64.apk"]
+    end
+```
+* **Code Anchors (Grep Targets):**
+  * `.github/workflows/tauri-release.yml` -> `discover-branches`, `GaussBoard-Rust-Tauri-v`
+  * `.github/workflows/tauri-android.yml` -> `discover-branches`, `GaussBoard-Rust-Tauri-v`
+  * `scripts/smoke.js` -> `createAppHarness`
+  * `src/js/platform/tauri-board.js` -> `menuLabels`

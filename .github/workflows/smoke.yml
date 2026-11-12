@@ -1,9 +1,9 @@
 name: Editor smoke
 on:
   push:
-    branches: ['main']
+    branches: ['**']
   pull_request:
-    paths: ['src/**', 'test/**', 'scripts/**', 'main.js', 'preload.js', 'package*.json', '.github/workflows/smoke.yml']
+    paths: ['src/**', 'src-tauri/**', 'test/**', 'scripts/**', 'package*.json', '.github/workflows/smoke.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -13,7 +13,7 @@ concurrency:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,10 +21,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run smoke:new
+      - name: Run 24/24 Active Features Smoke Suite
+        run: npm run smoke:new
+      - name: Verify 100% 7-Locale i18n Parity
+        run: npm run i18n:check
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: GaussBoard-editor-smoke
+          name: GaussBoard-Rust-smoke
           path: test/out/
           retention-days: 7

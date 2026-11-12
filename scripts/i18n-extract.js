@@ -84,7 +84,6 @@ function extract() {
     if (f.endsWith(path.join('js', 'i18n.js'))) continue;   // the machinery, not the words
     fromScript(f, found, problems);
   }
-  fromScript(path.join(ROOT, 'main.js'), found, problems);
   fromHtml(path.join(ROOT, 'src', 'index.html'), found);
   // the page's own <title> is a name, not a sentence
   found.delete('GazBoard');

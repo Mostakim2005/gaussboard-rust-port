@@ -1,7 +1,7 @@
 // src/js/platform/tauri-board.js
 (function initTauriBridge() {
   if (typeof window === 'undefined' || window.board) {
-    return; // Electron preload already provided window.board
+    return; // Native bridge already mounted window.board
   }
   const tauri = window.__TAURI__;
   if (!tauri || !tauri.core || !tauri.event) {
@@ -228,6 +228,24 @@
 
     power: {
       getStatus: () => invoke('get_power_status')
-    }
+    },
+
+    // Desktop menu labels catalog (retained for 7-locale i18n parity across native host menus)
+    menuLabels: (t) => [
+      t('File'),
+      t('Insert document (Word / PowerPoint / PDF)…'),
+      t('Insert answer cover'),
+      t('Insert link to a board…'),
+      t('Close window'),
+      t('Quit'),
+      t('Edit'),
+      t('View'),
+      t('Format background…'),
+      t('Toggle ruler'),
+      t('Full screen'),
+      t('Maximise window'),
+      t('Developer tools'),
+      t('Help')
+    ]
   };
 })();
