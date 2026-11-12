@@ -1,10 +1,145 @@
 // src-tauri/src/bundle.rs
+use crate::state::AppState;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use std::fs::File;
-use std::io::{self, BufReader, BufWriter, Read, Write};
+use std::io::{self, BufReader, BufWriter, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
+
+fn is_safe_asset_id(id: &str) -> bool {
+    let trimmed = id.trim();
+    !trimmed.is_empty()
+        && !trimmed.contains("..")
+        && !trimmed.contains('/')
+        && !trimmed.contains('\\')
+}
+
+pub fn is_already_compressed_ext(name: &str) -> bool {
+    let ext = Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "pdf" | "png" | "jpg" | "jpeg" | "webp" | "webm" | "ogg" | "mp3" | "m4a"
+    )
+}
+
+pub fn collect_external_asset_ids(board_json: &Value) -> BTreeSet<String> {
+    let mut ids = BTreeSet::new();
+
+    if let Some(tracks) = board_json.get("audioTracks").and_then(|v| v.as_array()) {
+        for track in tracks {
+            if let Some(asset_id) = track.get("assetId").and_then(|v| v.as_str()) {
+                let trimmed = asset_id.trim();
+                if is_safe_asset_id(trimmed) {
+                    ids.insert(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    if let Some(objects) = board_json.get("objects").and_then(|v| v.as_array()) {
+        for obj in objects {
+            let is_pdf_page = obj.get("type").and_then(|v| v.as_str()) == Some("pdf-page");
+            if is_pdf_page || obj.get("assetId").is_some() {
+                if let Some(asset_id) = obj.get("assetId").and_then(|v| v.as_str()) {
+                    let trimmed = asset_id.trim();
+                    if is_safe_asset_id(trimmed) {
+                        ids.insert(trimmed.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    ids
+}
+
+pub fn export_gaussboard_to_bytes(
+    state: &AppState,
+    board_json: &Value,
+    extra_assets: &[String],
+) -> Result<Vec<u8>, String> {
+    let mut asset_ids = collect_external_asset_ids(board_json);
+    for extra in extra_assets {
+        let trimmed = extra.trim();
+        if is_safe_asset_id(trimmed) {
+            asset_ids.insert(trimmed.to_string());
+        }
+    }
+
+    let cursor = Cursor::new(Vec::new());
+    let mut zip = ZipWriter::new(cursor);
+
+    let deflated_opts = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .unix_permissions(0o644);
+    let stored_opts = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Stored)
+        .unix_permissions(0o644);
+
+    let board_bytes = serde_json::to_vec(board_json)
+        .map_err(|e| format!("Failed to serialize board.json: {}", e))?;
+    zip.start_file("board.json", deflated_opts)
+        .map_err(|e| format!("Failed starting board.json entry: {}", e))?;
+    zip.write_all(&board_bytes)
+        .map_err(|e| format!("Failed writing board.json entry: {}", e))?;
+
+    let assets_dir = state.assets_dir();
+    let mut copy_buf = [0u8; 64 * 1024];
+
+    for raw_id in asset_ids {
+        if !is_safe_asset_id(&raw_id) {
+            continue;
+        }
+        let direct = assets_dir.join(&raw_id);
+        let resolved_path = if direct.is_file() {
+            Some(direct)
+        } else {
+            crate::assets::resolve_asset_path(&assets_dir, &raw_id)
+        };
+
+        let Some(file_path) = resolved_path else {
+            continue;
+        };
+
+        let safe_name = raw_id.trim();
+        let entry_name = format!("assets/{}", safe_name);
+        let opts = if is_already_compressed_ext(safe_name) {
+            stored_opts
+        } else {
+            deflated_opts
+        };
+
+        let mut f = match File::open(&file_path) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+
+        zip.start_file(&entry_name, opts)
+            .map_err(|e| format!("Failed starting asset entry {}: {}", entry_name, e))?;
+        loop {
+            let n = f
+                .read(&mut copy_buf)
+                .map_err(|e| format!("Failed reading asset {}: {}", safe_name, e))?;
+            if n == 0 {
+                break;
+            }
+            zip.write_all(&copy_buf[..n])
+                .map_err(|e| format!("Failed writing asset {}: {}", safe_name, e))?;
+        }
+    }
+
+    let cursor = zip
+        .finish()
+        .map_err(|e| format!("Failed finalizing .gaussboard archive: {}", e))?;
+    Ok(cursor.into_inner())
+}
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct BundleExportResult {
@@ -45,6 +180,9 @@ pub async fn bundle_export(
         let file_options = SimpleFileOptions::default()
             .compression_method(compression)
             .unix_permissions(0o644);
+        let stored_options = SimpleFileOptions::default()
+            .compression_method(CompressionMethod::Stored)
+            .unix_permissions(0o644);
 
         let mut zip = ZipWriter::new(buf_writer);
 
@@ -60,7 +198,12 @@ pub async fn bundle_export(
             }
 
             if path.is_file() {
-                zip.start_file(&name, file_options)
+                let entry_opts = if is_already_compressed_ext(&name) {
+                    stored_options
+                } else {
+                    file_options
+                };
+                zip.start_file(&name, entry_opts)
                     .map_err(|e| format!("Failed to start zip file entry {}: {}", name, e))?;
                 let mut f = File::open(path)
                     .map_err(|e| format!("Failed to open file {}: {}", path.display(), e))?;

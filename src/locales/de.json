@@ -2378,5 +2378,8 @@
  "Hold gesture mode": "Halte-Gestenmodus",
  "Hold menu: Radial ring": "Halte-Menü: Radialer Ring",
  "Hold menu: Classic list": "Halte-Menü: Klassische Liste",
- "Hold gestures disabled": "Halte-Gesten deaktiviert"
+ "Hold gestures disabled": "Halte-Gesten deaktiviert",
+ "Importing PDF…": "PDF wird importiert…",
+ "Preparing PDF pages for export…": "PDF-Seiten werden für den Export vorbereitet…",
+ "PDF file not found": "PDF-Datei nicht gefunden"
 }

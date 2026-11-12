@@ -26,8 +26,13 @@ async function renderPageTo(page, scale) {
  * chosen pages at full size from this same handle.
  */
 export async function openPdf(data) {
+  const safeData = data instanceof Uint8Array
+    ? data.slice()
+    : data instanceof ArrayBuffer
+      ? data.slice(0)
+      : data;
   const pdf = await pdfjsLib.getDocument({
-    data,
+    data: safeData,
     cMapUrl: BASE + 'cmaps/',
     cMapPacked: true,
     standardFontDataUrl: BASE + 'standard_fonts/',
@@ -37,6 +42,12 @@ export async function openPdf(data) {
 
   return {
     numPages: pdf.numPages,
+
+    async pageSize(pageNo) {
+      const page = await pdf.getPage(pageNo);
+      const vp = page.getViewport({ scale: 1 });
+      return { w: vp.width, h: vp.height };
+    },
 
     /** @returns {Promise<{dataUrl,width,height,page}>} */
     async render(pageNo, scale = 2, type, quality) {

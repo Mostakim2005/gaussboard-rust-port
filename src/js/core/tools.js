@@ -1050,7 +1050,7 @@ export class Interaction {
         if (h === 'n' || h === 's') sx = 1;
         if (h === 'e' || h === 'w') sy = 1;
         const hasCard = a.objs.some((o) => (o.type === 'text' || o.type === 'note') && (o.markdown !== false || o.cardStyle || o.autoSize === false));
-        const uniform = mods.shift || a.objs.some((o) => o.type === 'image' || o.type === 'math' || o.type === 'diagram') || (h.length === 2 && !mods.alt && !hasCard);
+        const uniform = mods.shift || a.objs.some((o) => o.type === 'image' || o.type === 'pdf-page' || o.type === 'math' || o.type === 'diagram') || (h.length === 2 && !mods.alt && !hasCard);
         if (uniform && h.length === 2) { const s = Math.max(Math.abs(sx), Math.abs(sy)); sx = Math.sign(sx || 1) * s; sy = Math.sign(sy || 1) * s; }
         sx = clamp(sx, -20, 20); sy = clamp(sy, -20, 20);
         if (Math.abs(sx) < 0.02) sx = 0.02 * Math.sign(sx || 1);

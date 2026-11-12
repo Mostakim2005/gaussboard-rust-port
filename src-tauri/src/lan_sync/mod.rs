@@ -8,6 +8,7 @@ use crate::{
         discovery::{DiscoveryPacket, PEER_FORGOTTEN_AFTER_MS},
         protocol::*,
     },
+    state::AppState,
     storage::atomic_write_bytes,
 };
 use axum::{
@@ -40,6 +41,7 @@ pub const DEFAULT_HTTP_PORT: u16 = 53318;
 pub const CODE_TTL_MS: u64 = 300_000;
 pub const CODE_MAX_ATTEMPTS: u32 = 5;
 pub const MAX_BOARD_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_ASSET_BYTES: usize = 256 * 1024 * 1024;
 pub const MAX_PAIR_BYTES: usize = 8 * 1024;
 pub const SEND_TIMEOUT_MS: u64 = 330_000;
 
@@ -95,6 +97,7 @@ pub struct ActivePairingSession {
 
 pub struct LanSyncManager {
     pub user_data_dir: PathBuf,
+    pub app_state: Arc<AppState>,
     pub identity: RwLock<SyncIdentity>,
     pub paired_peers: RwLock<HashMap<String, PairedPeerRecord>>,
     pub session_keys: RwLock<HashMap<String, [u8; 32]>>,
@@ -113,7 +116,7 @@ pub(crate) fn now_ms() -> u64 {
 }
 
 impl LanSyncManager {
-    pub fn new(user_data_dir: PathBuf) -> Arc<Self> {
+    pub fn new(user_data_dir: PathBuf, app_state: Arc<AppState>) -> Arc<Self> {
         let ident_path = user_data_dir.join("sync-identity.json");
         let identity = std::fs::read_to_string(&ident_path)
             .ok()
@@ -154,6 +157,7 @@ impl LanSyncManager {
 
         Arc::new(Self {
             user_data_dir,
+            app_state,
             identity: RwLock::new(identity),
             paired_peers: RwLock::new(paired_map),
             session_keys: RwLock::new(session_keys),
@@ -425,6 +429,57 @@ async fn handle_pair_confirm<R: Runtime>(
     )
 }
 
+async fn handle_sync_asset<R: Runtime>(
+    AxumState(ctx): AxumState<HttpServerContext<R>>,
+    headers: HeaderMap,
+    Json(env): Json<WireEnvelope>,
+) -> Response {
+    let sender_id = headers
+        .get("X-GazBoard-From")
+        .and_then(|v| v.to_str().ok())
+        .or_else(|| env.aad.get("from").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .to_string();
+
+    let Some(device_key) = ctx.mgr.get_device_key(&sender_id) else {
+        return json_no_store(StatusCode::UNAUTHORIZED, json!({ "error": "unpaired sender" }));
+    };
+
+    let raw_asset_id = headers
+        .get("X-Asset-Id")
+        .and_then(|v| v.to_str().ok())
+        .or_else(|| env.aad.get("assetId").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .trim();
+
+    if raw_asset_id.is_empty()
+        || raw_asset_id.contains("..")
+        || raw_asset_id.contains('/')
+        || raw_asset_id.contains('\\')
+    {
+        return json_no_store(StatusCode::BAD_REQUEST, json!({ "error": "invalid assetId" }));
+    }
+    let Ok(asset_id) = crate::assets::sanitize_asset_id(raw_asset_id) else {
+        return json_no_store(StatusCode::BAD_REQUEST, json!({ "error": "invalid assetId" }));
+    };
+
+    let Ok(raw_bytes) = open_envelope(&device_key, &env) else {
+        return json_no_store(StatusCode::FORBIDDEN, json!({ "error": "decryption failed" }));
+    };
+
+    let assets_dir = ctx.mgr.app_state.assets_dir();
+    let _ = std::fs::create_dir_all(&assets_dir);
+    let target_path = assets_dir.join(&asset_id);
+    if let Err(e) = atomic_write_bytes(&target_path, &raw_bytes) {
+        return json_no_store(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "error": format!("failed writing asset: {}", e) }),
+        );
+    }
+
+    json_no_store(StatusCode::OK, json!({ "ok": true, "assetId": asset_id }))
+}
+
 async fn handle_send<R: Runtime>(
     AxumState(ctx): AxumState<HttpServerContext<R>>,
     headers: HeaderMap,
@@ -575,6 +630,10 @@ pub async fn start_lan_sync_services<R: Runtime>(
         .route(
             "/send",
             post(handle_send::<R>).layer(DefaultBodyLimit::max(MAX_BOARD_BYTES)),
+        )
+        .route(
+            "/sync-asset",
+            post(handle_sync_asset::<R>).layer(DefaultBodyLimit::max(MAX_ASSET_BYTES)),
         )
         .route(
             "/paired",

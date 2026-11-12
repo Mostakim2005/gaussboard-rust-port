@@ -2378,5 +2378,8 @@
  "Hold gesture mode": "وضع إيماءة الضغط المطوّل",
  "Hold menu: Radial ring": "قائمة الضغط المطوّل: حلقة دائرية",
  "Hold menu: Classic list": "قائمة الضغط المطوّل: قائمة تقليدية",
- "Hold gestures disabled": "إيماءات الضغط المطوّل معطلة"
+ "Hold gestures disabled": "إيماءات الضغط المطوّل معطلة",
+ "Importing PDF…": "جارٍ استيراد ملف PDF…",
+ "Preparing PDF pages for export…": "جارٍ تحضير صفحات PDF للتصدير…",
+ "PDF file not found": "ملف PDF غير موجود"
 }

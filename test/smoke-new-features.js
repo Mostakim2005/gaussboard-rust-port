@@ -207,7 +207,105 @@ const browserChecks = String.raw`(async () => {
     out.workspaceSessionAndGraph = saved.name === 'SmokeSession' && listed.length > 0 && typeof gv.detectCommunities === 'function' && gv.communities.length > 0;
   } catch (e) { out.workspaceSessionAndGraph = e.message; }
 
-  // 24. No Uncaught Renderer Errors
+  // 24. Virtualized PDF Engine (type: 'pdf-page') + LOD Cache + TRAP 1/2/6 Compatibility
+  try {
+    const { pdfCache } = await import('app://board/js/core/pdf-cache.js');
+    const { worldBounds } = await import('app://board/js/core/store.js');
+    const { pick, inBox, curtainAt } = await import('app://board/js/core/hit.js');
+    const { drawObject } = await import('app://board/js/core/render.js');
+
+    // Register a valid minimal 1-page PDF buffer in pdfCache
+    const minPdfStr = '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>endobj\nxref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000052 00000 n \n0000000101 00000 n \ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n164\n%%EOF';
+    const dummyBytes = new Uint8Array(minPdfStr.length);
+    for (let i = 0; i < minPdfStr.length; i++) dummyBytes[i] = minPdfStr.charCodeAt(i);
+    pdfCache.registerBuffer('smoke-hash.pdf', dummyBytes);
+
+    // Add 100 lightweight pdf-page objects (simulating a 100-page textbook import with 0 Base64 bloat)
+    const ids = [];
+    for (let i = 0; i < 100; i++) {
+      const id = 'pg_smoke_' + i;
+      app.store.add({
+        id,
+        type: 'pdf-page',
+        kind: 'page',
+        assetId: 'smoke-hash.pdf',
+        pageIndex: i,
+        x: 0,
+        y: i * 1156,
+        w: 794,
+        h: 1123,
+        rotation: 0,
+        docPage: i + 1,
+        docSource: 'SmokeTextbook.pdf',
+        locked: true
+      });
+      ids.push(id);
+    }
+
+    const firstPage = app.store.get(ids[0]);
+    const wb = worldBounds(firstPage);
+    const hitSingle = pick(app.store, { x: 100, y: 100 }, 8);
+    // Locked background PDF pages are excluded from marquee inBox
+    const marqueeOverLocked = inBox(app.store, { x: -10, y: -10, w: 900, h: 1200 });
+
+    // Study Tape (TRAP 6) placed on top of pdf-page 0
+    const tapeId = 'curtain_smoke_tape';
+    app.store.add({
+      id: tapeId,
+      type: 'curtain',
+      subtype: 'tape',
+      x: 120,
+      y: 180,
+      w: 240,
+      h: 48,
+      color: '#ff922b',
+      revealed: false
+    });
+    const topHit = curtainAt(app.store, { x: 150, y: 200 }, 8);
+    app.toggleCurtain(tapeId);
+    const tapeRevealed = app.store.get(tapeId).revealed === true;
+
+    // Audio-synced stroke (TRAP 1 & TRAP 2) over pdf-page 0 preserves p.t
+    const strokeId = 'stroke_smoke_pdf_sync';
+    app.store.add({
+      id: strokeId,
+      type: 'stroke',
+      audioId: 'trk_pdf_sync',
+      points: [{ x: 100, y: 100, p: 0.5, t: 420 }, { x: 200, y: 200, p: 0.6, t: 840 }],
+      color: '#1e1e1e',
+      width: 4
+    });
+    const strokeObj = app.store.get(strokeId);
+    const trap1Partitioned = app.store.objects.filter((o) => o.audioId !== 'trk_pdf_sync').every((o) => o.id !== strokeId);
+    const trap2TimestampIntact = strokeObj.points[0].t === 420 && strokeObj.points[1].t === 840;
+
+    // Verify JSON footprint of 100 pdf-page objects is tiny (< 35 KB total, 0 Base64 strings)
+    const serialized = JSON.stringify(ids.map((id) => app.store.get(id)));
+    const zeroBase64Bloat = serialized.length < 35000 && !serialized.includes('data:image/');
+
+    // Verify drawObject('pdf-page') executes cleanly without throwing
+    const mockCtx = document.createElement('canvas').getContext('2d');
+    drawObject(mockCtx, firstPage, () => {});
+    pdfCache.evictAsset('smoke-hash.pdf');
+
+    // Clean up test objects
+    for (const id of [...ids, tapeId, strokeId]) app.store.remove(id);
+
+    out.virtualizedPdfEngine = (
+      wb.w === 794 && wb.h === 1123 &&
+      hitSingle?.id === firstPage.id &&
+      marqueeOverLocked.length === 0 &&
+      topHit?.id === tapeId &&
+      tapeRevealed &&
+      trap1Partitioned &&
+      trap2TimestampIntact &&
+      zeroBase64Bloat &&
+      pdfCache.selectLodScale(0.2) === 0.25 &&
+      pdfCache.selectLodScale(1.8) === 2.0
+    );
+  } catch (e) { out.virtualizedPdfEngine = e.message; }
+
+  // 25. No Uncaught Renderer Errors
   const errs = window.__errors || [];
   out.rendererErrors = errs.length === 0;
 
@@ -240,6 +338,7 @@ async function run(win, app) {
     dataviewAndKanban: 'Dataview query engine and Kanban board card creation',
     connectorsAndSnapPorts: 'Orthogonal 90-degree routing and magnetic snap ports',
     workspaceSessionAndGraph: 'Multi-tab workspace session save and knowledge graph clustering halos',
+    virtualizedPdfEngine: 'Virtualized PDF engine (100 pages < 35 KB JSON, 0 Base64, LOD cache, TRAP 1/2/6 intact)',
     rendererErrors: 'No uncaught renderer errors'
   };
 

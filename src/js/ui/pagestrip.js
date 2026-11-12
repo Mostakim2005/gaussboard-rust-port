@@ -22,6 +22,8 @@ import { h } from './popover.js';
 import { icon } from './icons.js';
 import { pageRects, pageIndexForBoxIn } from '../core/pages.js';
 import { worldBounds } from '../core/store.js';
+import { boxesIntersect } from '../core/util.js';
+import { pdfCache } from '../core/pdf-cache.js';
 
 // CSS pixels across one picture: smaller on a phone, where the strip must not cover half the page
 const thumbWidth = () => (typeof innerWidth === 'number' && innerWidth < 700 ? 72 : 112);
@@ -147,7 +149,8 @@ export class PageStrip {
       if (i < 0) continue;
       parts[i].push(id, Math.round(b.x), Math.round(b.y), Math.round(b.w), Math.round(b.h),
         o.points ? o.points.length : '', o.color || o.stroke || '', o.fill || '', o.text ? o.text.length + ':' + hashOf(o.text) : '',
-        o.runs ? hashOf(JSON.stringify(o.runs)) : '', o.revealed ? 1 : 0, o.src ? o.src.length : '');
+        o.runs ? hashOf(JSON.stringify(o.runs)) : '', o.revealed ? 1 : 0, o.src ? o.src.length : '',
+        o.assetId || '', o.pageIndex ?? '');
     }
     const paper = JSON.stringify(doc.background || {});
     return parts.map((p, i) => paper + '|' + (doc.pages[i]?.date || '') + '|' + hashOf(p.join(',')));
@@ -173,6 +176,23 @@ export class PageStrip {
 
   draw(it, dpr) {
     const scale = (thumbWidth() * dpr) / it.box.w;
+    const doc = this.app.store.doc;
+    for (const id of doc.order) {
+      const o = doc.objects[id];
+      if (!o || o.type !== 'pdf-page' || o.hidden || !o.assetId) continue;
+      if (!boxesIntersect(it.box, worldBounds(o))) continue;
+      const targetScale = pdfCache.selectLodScale(scale);
+      const idx = Number(o.pageIndex) || 0;
+      const key = `${o.assetId}#${idx}@${targetScale}`;
+      if (!pdfCache.textures.has(key)) {
+        pdfCache.getPageTexture(o.assetId, idx, scale, () => {
+          if (pdfCache.textures.has(key)) {
+            it.drawnSig = null;
+            this.schedule(80);
+          }
+        }, 10);
+      }
+    }
     let pic;
     try { pic = this.app.surface.renderTo(it.box, scale, true, true); } catch { return; }
     it.canvas.width = pic.width;

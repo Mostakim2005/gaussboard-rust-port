@@ -191,6 +191,22 @@
   * `test/audio-clock.test.mjs` -> `HardwareAudioClock suite`
   * `test/replay-timed-bezier.test.mjs` -> `timed Bezier replay suite`
 
+### [FEATURE: Virtualized-Pdf-Page-Engine] | Aliases: pdf-page, HTTP 206 streaming, LOD tiles, zero-bloat PDF, multi-hundred page PDF
+> **1-Line Summary:** Content-addressed raw PDF ingestion (`<sha256>.pdf`), HTTP 206 Partial Content streaming via `app://board/__asset/<id>`, 4-tier LOD + 512x512 high-zoom vector tiling with strict GPU VRAM LRU eviction, eliminating 160 MB Base64 PNG bloat across 100+ page documents while preserving `p.t` audio sync and Study Tape occlusion.
+* **User Intention (Non-Negotiable):** Import multi-hundred-page PDF textbooks or lecture slides with near-zero board JSON overhead (~150 bytes per `pdf-page` reference instead of ~1.2 MB Base64 PNG), crisp text/equation clarity at deep zoom, bounded GPU VRAM usage, and full compatibility with audio-ink sync, Study Tape, `.gaussboard` export bundling, and LAN sync.
+* **Visual / UI Behavior:** Opening the Page Picker keeps full selection/layout control; inserted PDF pages appear immediately and upgrade progressively through LOD scales (`0.25`, `0.75`, `1.25`, `2.0`) plus 512x512 high-zoom tiles (`> 2.2x` effective zoom) while fast scrolls cancel stale off-screen render jobs.
+* **Code Anchors (Grep Targets):**
+  * `src/js/core/pdf-cache.js` -> `PdfTextureManager`, `pdfCache`, `warmBoxForSyncRender`
+  * `src/js/core/render.js` -> `drawPdfPage`, `setRenderViewState`
+  * `src/js/core/surface.js` -> `drawScene`
+  * `src/js/importers/pdf.js` -> `openPdf`, `pageSize`
+  * `src/js/insert.js` -> `ingestPdfBinary`, `layoutPages`
+  * `src-tauri/src/assets.rs` -> `pdf_ingest_path`, `pdf_ingest_bytes`, `assets_read_raw`
+  * `src-tauri/src/protocol_app.rs` -> `handle_asset_stream`, `handle_app_protocol`
+  * `src-tauri/src/bundle.rs` -> `collect_external_asset_ids`, `export_gaussboard_to_bytes`
+  * `src-tauri/src/lan_sync/mod.rs` -> `handle_sync_asset`
+
+
 
 ## 3. Planned Features & App-Merge Wishlist
 
@@ -206,8 +222,8 @@
 
 ## 4. Canonical References & Live Verification
 * **Core Documentation Suite:** `docs/PRODUCT.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS_AND_TRAPS.md`, `docs/releases/ANDROID_READINESS.md`
-* **Active Verification Suite:** `node scripts/smoke.js --new-features` (24/24 passing)
-* **Internationalization Suite:** `node scripts/i18n-check.js` (2,380/2,380 across 7 locales)
+* **Active Verification Suite:** `node scripts/smoke.js` (25/25 passing)
+* **Internationalization Suite:** `node scripts/i18n-check.js` (2,383/2,383 across 7 locales)
 * **Android Platform Suite:** `node --test test/android-*.test.js` (82/82 passing)
 * **Tauri 2 Rust Native Port:** `src-tauri/` (Tauri 2.1 native host with custom `app://board/` protocol, crash-safe `<id>.json` storage, SHA-256 assets, Axum sync, Windows portable/NSIS/MSI, and v2/v3 signed Android ARM64 APK via `tauri-android` workflow)
 * **Core Data Schemas & State:** `src/js/core/store.js` (`Store`, `doc.objects`, `doc.pages`, `doc.audioTracks`)

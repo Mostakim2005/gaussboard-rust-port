@@ -4,6 +4,7 @@ import { pageRects, pageIndexForBox, offsetIntoRect, nearestPageIndex, todayStam
 import { uid } from './core/util.js';
 import { boundsOf } from './core/store.js';
 import { openPdf } from './importers/pdf.js';
+import { pdfCache } from './core/pdf-cache.js';
 import { fixDeckBytes } from './importers/slidemedia.js';
 import { choosePages } from './ui/pagepicker.js';
 import { t } from './i18n.js';
@@ -217,7 +218,56 @@ async function makeImageObject(app, dataUrl, name, index = 0, at) {
 }
 
 /**
- * Convert a Word / PowerPoint / PDF file to page bitmaps and lay them out.
+ * Ingest a raw PDF binary into the native content-addressed asset store (or
+ * browser/test fallback) and register its bytes in `pdfCache` for zero-latency
+ * rendering during the active session.
+ */
+export async function ingestPdfBinary(buf, filePath = null) {
+  const u8 = buf instanceof Uint8Array
+    ? new Uint8Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength))
+    : new Uint8Array(buf instanceof ArrayBuffer ? buf.slice(0) : buf);
+
+  let nativeRes = null;
+  if (filePath && window.board?.pdf?.ingestPath) {
+    try { nativeRes = await window.board.pdf.ingestPath(filePath); } catch { nativeRes = null; }
+  }
+  if ((!nativeRes || !nativeRes.ok || !nativeRes.assetId) && window.board?.pdf?.ingestBytes) {
+    try { nativeRes = await window.board.pdf.ingestBytes(u8); } catch { nativeRes = null; }
+  }
+  if (nativeRes && nativeRes.ok && nativeRes.assetId) {
+    pdfCache.registerBuffer(nativeRes.assetId, u8);
+    return nativeRes.assetId;
+  }
+
+  let hashHex = '';
+  if (typeof crypto !== 'undefined' && crypto.subtle?.digest) {
+    const hashBuf = await crypto.subtle.digest('SHA-256', u8);
+    hashHex = Array.from(new Uint8Array(hashBuf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  } else {
+    let h1 = 0x811c9dc5 >>> 0, h2 = 0x01000193 >>> 0;
+    for (let i = 0; i < u8.length; i++) {
+      h1 = Math.imul(h1 ^ u8[i], 0x01000193) >>> 0;
+      h2 = Math.imul(h2 ^ u8[i], 0x811c9dc5) >>> 0;
+    }
+    hashHex = h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0') + u8.length.toString(16).padStart(8, '0');
+  }
+  const assetId = `${hashHex}.pdf`;
+  try {
+    if (window.board?.assets?.putBinaryDirect) {
+      await window.board.assets.putBinaryDirect(assetId, u8);
+    } else if (window.board?.assets?.put) {
+      const dataUrl = await bytesToDataUrl(u8, 'application/pdf');
+      await window.board.assets.put(assetId, dataUrl);
+    }
+  } catch (e) {
+    console.warn('[pdf] asset fallback store failed:', e);
+  }
+  pdfCache.registerBuffer(assetId, u8);
+  return assetId;
+}
+
+/**
+ * Convert a Word / PowerPoint / PDF file to virtualized PDF page objects and lay them out.
  *
  * Anything with more than one page goes through the picker first, so you can
  * take page 4 of a 90-page PDF instead of all ninety. Every page lands as its
@@ -225,7 +275,8 @@ async function makeImageObject(app, dataUrl, name, index = 0, at) {
  */
 export async function insertDocument(app, filePath, opts = {}) {
   const name = filePath.split(/[\\/]/).pop();
-  const progress = app.showProgress(t('Importing {name}', { name }), t('Converting document…'));
+  const isDirectPdf = typeof filePath === 'string' && /\.pdf$/i.test(filePath);
+  const progress = app.showProgress(t('Importing {name}', { name }), isDirectPdf ? t('Importing PDF…') : t('Converting document…'));
   let doc = null;
   try {
     const how = {};
@@ -243,7 +294,11 @@ export async function insertDocument(app, filePath, opts = {}) {
       }
     }
     const res = await window.board.importToPdf(filePath, how);
-    if (!res.ok) { progress.close(); app.toast(res.error || t('Import failed')); return null; }
+    if (!res.ok || !res.data) {
+      progress.close();
+      app.toast(res.error || (isDirectPdf ? t('PDF file not found') : t('Import failed')));
+      return null;
+    }
     if (res.officeNote) {
       app.toast(res.officeNote === 'absent'
         ? t('Microsoft Office is not on this computer, so the usual converter was used')
@@ -252,6 +307,7 @@ export async function insertDocument(app, filePath, opts = {}) {
 
     progress.update(0.2, res.engine === 'msoffice' ? t('Converted with Microsoft Office — reading pages…')
       : res.engine === 'libreoffice' ? t('Converted with LibreOffice — reading pages…') : t('Reading pages…'));
+    const assetId = await ingestPdfBinary(res.data, isDirectPdf ? filePath : null);
     doc = await openPdf(res.data);
     const total = doc.numPages;
     if (!total) { progress.close(); app.toast(t('No pages found in that document')); return null; }
@@ -261,8 +317,10 @@ export async function insertDocument(app, filePath, opts = {}) {
     let layout = opts.layout || null;
 
     if (!pages) {
-      if (total === 1) { pages = [1]; layout = layout || 'row'; }
-      else {
+      if (total === 1 || opts.importAll) {
+        pages = Array.from({ length: total }, (_, i) => i + 1);
+        layout = layout || (pages.length > 6 ? 'grid' : 'row');
+      } else {
         const choice = await choosePages(app, { name, count: total, thumb: (n) => doc.thumb(n) });
         if (!choice) { await doc.destroy(); app.toast(t('Import cancelled')); return null; }
         pages = choice.pages;
@@ -278,7 +336,12 @@ export async function insertDocument(app, filePath, opts = {}) {
     const rendered = [];
     for (let i = 0; i < pages.length; i++) {
       render.update((i + 1) / pages.length, t('Rendering page {page} ({n} of {total})…', { page: pages[i], n: i + 1, total: pages.length }));
-      rendered.push(await doc.render(pages[i], opts.quality ?? app.settings.importQuality ?? 2));
+      if (typeof doc.pageSize === 'function' && assetId) {
+        const sz = await doc.pageSize(pages[i]);
+        rendered.push({ w: sz.w, h: sz.h, width: sz.w, height: sz.h, page: pages[i], pageNo: pages[i], assetId });
+      } else {
+        rendered.push(await doc.render(pages[i], opts.quality ?? app.settings.importQuality ?? 2));
+      }
     }
     await doc.destroy();
     doc = null;
@@ -312,20 +375,46 @@ export async function insertDocument(app, filePath, opts = {}) {
 /** Place rendered pages on the board without overlapping what is already there. */
 function layoutPages(app, rendered, { name, layout, multiPage, importMode = 'objects', fitMode = 'fitWidth' }) {
   const isBg = importMode === 'background';
-  const mk = (p, box, locked = isBg) => ({
-    id: uid('pg'), type: 'image', kind: 'page',
-    x: box.x, y: box.y, w: box.w, h: box.h,
-    rotation: 0, src: p.dataUrl,
-    name, label: multiPage ? t('{name} — page {page}', { name, page: p.page }) : name,
-    docSource: name, docPage: p.page,
-    locked: !!locked
-  });
+  const pw = (p) => p.w ?? p.width;
+  const ph = (p) => p.h ?? p.height;
+  const pno = (p) => p.pageNo ?? p.page ?? 1;
+
+  const mk = (p, box, locked = isBg) => {
+    const pageNo = pno(p);
+    if (p.assetId) {
+      return {
+        id: uid('pg'),
+        type: 'pdf-page',
+        kind: 'page',
+        assetId: p.assetId,
+        pageIndex: (pageNo || 1) - 1,
+        x: box.x,
+        y: box.y,
+        w: box.w,
+        h: box.h,
+        rotation: 0,
+        name,
+        label: multiPage ? t('{name} — page {page}', { name, page: pageNo }) : name,
+        docPage: pageNo,
+        docSource: name,
+        locked: !!locked
+      };
+    }
+    return {
+      id: uid('pg'), type: 'image', kind: 'page',
+      x: box.x, y: box.y, w: box.w, h: box.h,
+      rotation: 0, src: p.src || p.dataUrl,
+      name, label: multiPage ? t('{name} — page {page}', { name, page: pageNo }) : name,
+      docSource: name, docPage: pageNo,
+      locked: !!locked
+    };
+  };
 
   // On a pad, or when importing as page backgrounds, create sheets
   const pad = isBg && !app.pages.length
     ? rendered.map((p) => {
-      const w = fitMode === 'fitHeight' ? Math.round(p.width * (1122 / p.height)) : 794;
-      const h = fitMode === 'fitWidth' ? Math.round(p.height * (794 / p.width)) : 1122;
+      const w = fitMode === 'fitHeight' ? Math.round(pw(p) * (1122 / ph(p))) : 794;
+      const h = fitMode === 'fitWidth' ? Math.round(ph(p) * (794 / pw(p))) : 1122;
       return { w, h, date: todayStamp() };
     })
     : app.pages;
@@ -341,31 +430,32 @@ function layoutPages(app, rendered, { name, layout, multiPage, importMode = 'obj
     while (pages.length < start + rendered.length) {
       const idx = pages.length - start;
       const refP = rendered[idx] || rendered[0];
-      const w = isBg && fitMode === 'fitHeight' ? Math.round(refP.width * (1122 / refP.height)) : (last ? last.w : 794);
-      const h = isBg && fitMode === 'fitWidth' ? Math.round(refP.height * (794 / refP.width)) : (last ? last.h : 1122);
+      const w = isBg && fitMode === 'fitHeight' ? Math.round(pw(refP) * (1122 / ph(refP))) : (last ? last.w : 794);
+      const h = isBg && fitMode === 'fitWidth' ? Math.round(ph(refP) * (794 / pw(refP))) : (last ? last.h : 1122);
       pages.push({ w, h, date: todayStamp() });
     }
     const rects = pageRects(pages);
 
     const objs = rendered.map((p, i) => {
       const r = rects[start + i];
+      const pWidth = pw(p), pHeight = ph(p);
       let w, h, x, y;
       if (isBg && fitMode === 'fitWidth') {
-        const s = r.w / p.width;
+        const s = r.w / pWidth;
         w = r.w;
-        h = p.height * s;
+        h = pHeight * s;
         x = r.x;
         y = r.y + Math.max(0, (r.h - h) / 2);
       } else if (isBg && fitMode === 'fitHeight') {
-        const s = r.h / p.height;
+        const s = r.h / pHeight;
         h = r.h;
-        w = p.width * s;
+        w = pWidth * s;
         y = r.y;
         x = r.x + Math.max(0, (r.w - w) / 2);
       } else {
-        const s = Math.min((r.w - margin * 2) / p.width, (r.h - margin * 2) / p.height);
-        w = p.width * s;
-        h = p.height * s;
+        const s = Math.min((r.w - margin * 2) / pWidth, (r.h - margin * 2) / pHeight);
+        w = pWidth * s;
+        h = pHeight * s;
         x = r.x + (r.w - w) / 2;
         y = r.y + (r.h - h) / 2;
       }
@@ -376,8 +466,8 @@ function layoutPages(app, rendered, { name, layout, multiPage, importMode = 'obj
 
   const worldScale = 1.6;                       // 72dpi points -> comfortable board units
   const gap = 48;
-  const cellW = Math.max(...rendered.map((p) => p.width)) * worldScale;
-  const cellH = Math.max(...rendered.map((p) => p.height)) * worldScale;
+  const cellW = Math.max(...rendered.map((p) => pw(p))) * worldScale;
+  const cellH = Math.max(...rendered.map((p) => ph(p))) * worldScale;
 
   const perRow = layout === 'grid' ? Math.min(6, Math.ceil(Math.sqrt(rendered.length)))
     : layout === 'stack' ? 1 : rendered.length;
@@ -397,7 +487,7 @@ function layoutPages(app, rendered, { name, layout, multiPage, importMode = 'obj
       x = origin.x + col * (cellW + gap);
       y = origin.y + row * (cellH + gap);
     }
-    return mk(p, { x, y, w: p.width * worldScale, h: p.height * worldScale });
+    return mk(p, { x, y, w: pw(p) * worldScale, h: ph(p) * worldScale });
   });
   return { objs, pages: null, focus: -1 };
 }

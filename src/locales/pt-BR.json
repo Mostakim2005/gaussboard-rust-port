@@ -2378,5 +2378,8 @@
  "Hold gesture mode": "Modo de gesto de segurar",
  "Hold menu: Radial ring": "Menu ao segurar: Anel radial",
  "Hold menu: Classic list": "Menu ao segurar: Lista clássica",
- "Hold gestures disabled": "Gestos de segurar desativados"
+ "Hold gestures disabled": "Gestos de segurar desativados",
+ "Importing PDF…": "Importando PDF…",
+ "Preparing PDF pages for export…": "Preparando páginas PDF para exportação…",
+ "PDF file not found": "Arquivo PDF não encontrado"
 }

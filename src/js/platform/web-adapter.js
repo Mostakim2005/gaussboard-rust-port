@@ -13,6 +13,126 @@ updater.setAppVersion(APP_VERSION);
 
 const _menuListeners = new Set();
 const _openFileListeners = new Set();
+const STORE_ASSETS = 'assets';
+const _memRawAssets = new Map();
+
+function toUint8(input) {
+  if (!input) return new Uint8Array(0);
+  if (input instanceof Uint8Array) return input;
+  if (input instanceof ArrayBuffer) return new Uint8Array(input);
+  if (ArrayBuffer.isView(input)) return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+  if (Array.isArray(input)) return new Uint8Array(input);
+  return new Uint8Array(0);
+}
+
+async function computeSha256Hex(u8) {
+  if (typeof crypto !== 'undefined' && crypto?.subtle?.digest) {
+    try {
+      const digest = await crypto.subtle.digest('SHA-256', u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength));
+      return Array.from(new Uint8Array(digest))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+    } catch {}
+  }
+  // Fallback FNV-extended 64-hex deterministic digest if WebCrypto unavailable
+  const h = new Uint32Array([
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+  ]);
+  for (let i = 0; i < u8.length; i++) {
+    const lane = i & 7;
+    h[lane] = Math.imul(h[lane] ^ u8[i], 0x01000193) >>> 0;
+  }
+  return Array.from(h).map((x) => (x >>> 0).toString(16).padStart(8, '0')).join('');
+}
+
+async function idbPutAsset(id, u8) {
+  const cleanId = String(id || '').trim();
+  if (!cleanId || cleanId.includes('..') || cleanId.includes('/') || cleanId.includes('\\')) {
+    throw new Error('Unsafe asset ID');
+  }
+  const copy = new Uint8Array(u8.byteLength);
+  copy.set(u8);
+  _memRawAssets.set(cleanId, copy);
+  try {
+    const db = await storage.openDatabase();
+    await new Promise((resolve) => {
+      const tx = db.transaction(STORE_ASSETS, 'readwrite');
+      const store = tx.objectStore(STORE_ASSETS);
+      const mime = cleanId.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream';
+      store.put({
+        id: cleanId,
+        mime,
+        buffer: copy.buffer,
+        created: Date.now()
+      });
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    });
+  } catch {}
+  return { ok: true, id: cleanId };
+}
+
+async function idbGetAssetRaw(id) {
+  const cleanId = String(id || '').trim();
+  if (!cleanId || cleanId.includes('..') || cleanId.includes('/') || cleanId.includes('\\')) {
+    throw new Error('Unsafe asset ID');
+  }
+  if (_memRawAssets.has(cleanId)) {
+    return new Uint8Array(_memRawAssets.get(cleanId));
+  }
+  try {
+    const db = await storage.openDatabase();
+    const record = await new Promise((resolve) => {
+      const tx = db.transaction(STORE_ASSETS, 'readonly');
+      const req = tx.objectStore(STORE_ASSETS).get(cleanId);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+    if (record) {
+      if (record.buffer) {
+        const out = new Uint8Array(record.buffer);
+        _memRawAssets.set(cleanId, out);
+        return new Uint8Array(out);
+      }
+      if (typeof record.dataUrl === 'string') {
+        const comma = record.dataUrl.indexOf(',');
+        if (comma >= 0) {
+          const b64 = record.dataUrl.slice(comma + 1);
+          const bin = atob(b64);
+          const out = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+          _memRawAssets.set(cleanId, out);
+          return out;
+        }
+      }
+    }
+  } catch {}
+  return null;
+}
+
+async function webIngestPdfBytes(uint8Array) {
+  const u8 = toUint8(uint8Array);
+  if (
+    u8.byteLength < 5 ||
+    u8[0] !== 0x25 || // %
+    u8[1] !== 0x50 || // P
+    u8[2] !== 0x44 || // D
+    u8[3] !== 0x46 || // F
+    u8[4] !== 0x2d    // -
+  ) {
+    throw new Error('Invalid PDF file: missing %PDF- magic header');
+  }
+  const hash = await computeSha256Hex(u8);
+  const assetId = `${hash}.pdf`;
+  await idbPutAsset(assetId, u8);
+  return {
+    ok: true,
+    assetId,
+    byteLength: u8.byteLength,
+    uri: `app://board/__asset/${assetId}`
+  };
+}
 
 export function createWebAdapter() {
   // Request persistent storage on startup
@@ -99,7 +219,30 @@ export function createWebAdapter() {
     assets: {
       put: (dataUrl) => storage.putAsset(dataUrl),
       get: (id) => storage.getAsset(id),
-      have: (ids) => storage.haveAssets(ids)
+      have: async (ids) => {
+        const res = await storage.haveAssets(ids);
+        for (const id of Array.isArray(ids) ? ids : []) {
+          if (_memRawAssets.has(String(id || '').trim())) {
+            res[id] = true;
+          }
+        }
+        return res;
+      },
+      readRaw: (id) => idbGetAssetRaw(id),
+      putBinaryDirect: (id, uint8Array) => idbPutAsset(id, toUint8(uint8Array))
+    },
+
+    pdf: {
+      ingestPath: async (filePath) => {
+        try {
+          if (filePath) {
+            const buf = await files.readVirtualFile(filePath);
+            return await webIngestPdfBytes(new Uint8Array(buf));
+          }
+        } catch {}
+        return { ok: false };
+      },
+      ingestBytes: (uint8Array) => webIngestPdfBytes(uint8Array)
     },
 
     importToPdf: async (filePath) => {

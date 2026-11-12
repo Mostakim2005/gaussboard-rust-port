@@ -119,6 +119,30 @@ sequenceDiagram
   * `msoffice.js` -> `builtinConvert`, `GAZBOARD_DISABLE_LIBREOFFICE`
   * `src/convert.html` -> `hiddenConvertWindow`
 
+### [SUBSYSTEM: Virtualized-PDF-Streaming] | Aliases: pdf-cache.js, app://board/__asset, HTTP 206 Range, LOD tiles, VRAM LRU
+> **1-Line Summary:** Decouples raw PDF binaries (`<sha256>.pdf`) from board JSON (`type: 'pdf-page'`), serving 64 KB byte-ranges over HTTP 206 `app://board/__asset/<id>` to a priority-queued, VRAM-bounded LOD/tile compositor.
+* **How It Works (Plain English):** Upon PDF import, `ingestPdfBinary` stores the raw PDF once in `assets/<sha256>.pdf` and queries page dimensions (`page.getViewport({ scale: 1 })`) without rasterizing bitmaps. `drawPdfPage` draws from `PdfTextureManager`, which streams byte ranges via `protocol_app::handle_asset_stream` (HTTP 206 Partial Content + `HEAD`/`OPTIONS`), renders 4 LOD tiers (`0.25`, `0.75`, `1.25`, `2.0`) plus 512x512 vector tiles at `> 2.2x` zoom on a LIFO/priority queue (`<= 2-3` concurrent jobs with 2-frame scroll cancellation), and enforces a strict LRU VRAM cap (`64 MB` mobile / `192 MB` desktop) via `bmp.close()`. Before `exportPng`/`exportPdf`, `warmBoxForSyncRender` resolves `2.0x` textures synchronously; `.gaussboard` bundles store `.pdf` entries with `CompressionMethod::Stored`, and LAN Sync transfers them ahead of board metadata via `POST /sync-asset`.
+* **Architecture Diagram:**
+```mermaid
+flowchart LR
+    Import["PDF Import / Office Print"] -->|"pdf_ingest_path / ingestBytes"| Assets["assets/<sha256>.pdf (Content-Addressed)"]
+    Import -->|"pageSize (<0.1ms)"| Board["Board JSON: type: 'pdf-page' (~150B/page)"]
+    Assets -->|"HTTP 206 Range: 65KB chunks"| Proto["protocol_app::handle_asset_stream"]
+    Proto -->|"app://board/__asset/<id>"| Cache["PdfTextureManager (LOD 0.25..2.0 + 512x512 Tiles)"]
+    Cache -->|"VRAM LRU Cap (64MB/192MB)"| Canvas["drawPdfPage -> Surface Freeze Invalidation"]
+    Assets -->|"Stored ZIP / AES-GCM /sync-asset"| Portability[".gaussboard Export & LAN Sync"]
+```
+* **Code Anchors (Grep Targets):**
+  * `src/js/core/pdf-cache.js` -> `PdfTextureManager`, `getPageTexture`, `getVisibleTiles`, `warmBoxForSyncRender`
+  * `src/js/core/render.js` -> `drawPdfPage`, `setRenderViewState`
+  * `src/js/core/surface.js` -> `drawScene`
+  * `src-tauri/src/protocol_app.rs` -> `handle_asset_stream`
+  * `src-tauri/src/assets.rs` -> `pdf_ingest_path`, `pdf_ingest_bytes`, `assets_read_raw`
+  * `src-tauri/src/bundle.rs` -> `collect_external_asset_ids`, `export_gaussboard_to_bytes`
+  * `src-tauri/src/lan_sync/commands.rs` -> `sync_send`
+  * `src-tauri/src/lan_sync/mod.rs` -> `handle_sync_asset`
+  * `src-tauri/src/search.rs` -> `pdf_fts`, `search_index_pdf`
+
 ### [SUBSYSTEM: LAN-Sync-Transport] | Aliases: X25519, AES-256-GCM, discovery, pairing, firewall, sync-inbox
 > **1-Line Summary:** Offline LAN handoff with no extra npm dependencies, using Node built-in crypto and explicit user acceptance before any board is saved.
 * **How It Works (Plain English):** Discovery advertises on UDP 53319, transfers use TCP 53318 with fallback port. Pairing codes expire in 5 minutes after 5 attempts. Received boards show sender, name, size, and preview; Keep both or Replace, Escape declines, and replacing the open board reloads it.

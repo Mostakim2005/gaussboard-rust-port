@@ -9,6 +9,7 @@ import { mathEntry, hasMaths } from './maths.js';
 import { drawArrowhead, drawConnector } from './connectors.js';
 import { lookupBoard, refLabel, refMissing, currentBoardId, currentBoardName } from './boardrefs.js';
 import { isMarkdown, buildMarkdownSvgDataUri } from './markdown.js';
+import { pdfCache } from './pdf-cache.js';
 
 import { fontStack } from '../ui/palettes.js';
 import { t, currentLanguage, direction } from '../i18n.js';
@@ -18,6 +19,13 @@ export const HAND_FONT = fontStack('hand');
 
 /** Resolve an object's font id to a CSS stack. */
 export const faceOf = (id) => fontStack(id || 'ui');
+
+let _activeRenderCamZ = 1;
+let _activeRenderVbox = null;
+export function setRenderViewState(camZ, vbox) {
+  _activeRenderCamZ = camZ || 1;
+  _activeRenderVbox = vbox || null;
+}
 
 /* ---------- image cache ---------- */
 const imgCache = new Map();
@@ -1518,12 +1526,73 @@ export function drawObject(ctx, o, onload, editing = null) {
       case 'audio': drawAudioCard(ctx, o); break;
       case 'diagram': drawDiagram(ctx, o, onload); break;
       case 'video': drawVideoCard(ctx, o, onload); break;
+      case 'pdf-page': drawPdfPage(ctx, o, onload); break;
     }
   } catch (err) {
     console.warn('drawObject error for:', o.type, o.id, err);
   } finally {
     ctx.restore();
   }
+}
+
+export function drawPdfPage(ctx, o, onload) {
+  if (!o || !(o.w > 0) || !(o.h > 0)) return;
+  ctx.save();
+
+  // 1. White paper card background with subtle drop shadow
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowColor = 'rgba(0,0,0,0.18)';
+  ctx.shadowBlur = 12;
+  ctx.shadowOffsetY = 3;
+  ctx.fillRect(o.x, o.y, o.w, o.h);
+  ctx.shadowColor = 'transparent';
+
+  // 2. Request best LOD texture from virtualized PDF cache
+  const baseTex = pdfCache.getPageTexture(o.assetId, o.pageIndex || 0, _activeRenderCamZ, onload, 2);
+  if (baseTex && baseTex.bmp) {
+    ctx.drawImage(baseTex.bmp, o.x, o.y, o.w, o.h);
+  } else {
+    // 3. Loading skeleton with page badge while streaming/rasterizing
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(o.x, o.y, o.w, o.h);
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = `600 ${Math.max(12, Math.min(20, o.w * 0.03))}px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`PDF p.${(o.pageIndex || 0) + 1}`, o.x + o.w / 2, o.y + o.h / 2);
+  }
+
+  // 4. High-Zoom Vector Tile Overlay (> 2.2x effective zoom)
+  const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
+  if (_activeRenderCamZ * dpr > 2.2 && _activeRenderVbox) {
+    const tiles = pdfCache.getVisibleTiles(o, _activeRenderCamZ, _activeRenderVbox, onload);
+    if (tiles.length > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(o.x, o.y, o.w, o.h);
+      ctx.clip();
+      for (const tile of tiles) {
+        if (tile.bmp) {
+          ctx.drawImage(tile.bmp, tile.wx, tile.wy, tile.ww, tile.wh);
+        }
+      }
+      ctx.restore();
+    }
+  }
+
+  // 5. Crisp page border and optional label
+  ctx.strokeStyle = 'rgba(15, 23, 42, 0.14)';
+  ctx.lineWidth = Math.max(0.5, 1 / Math.max(0.1, _activeRenderCamZ));
+  ctx.strokeRect(o.x + 0.5, o.y + 0.5, o.w - 1, o.h - 1);
+  if (o.label) {
+    ctx.fillStyle = '#605e5c';
+    ctx.font = `${Math.max(11, o.w * 0.022)}px ${FONT}`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(o.label, o.x, o.y - 8);
+  }
+
+  ctx.restore();
 }
 
 /* =================================================================== *

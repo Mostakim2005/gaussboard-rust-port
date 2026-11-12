@@ -88,7 +88,16 @@ pub fn init_search_db(data_dir: PathBuf) -> Result<DbPool, String> {
              stability REAL DEFAULT 0.0,
              difficulty REAL DEFAULT 0.0
          );
-         CREATE INDEX IF NOT EXISTS idx_study_cards_due ON study_cards(due_timestamp);",
+         CREATE INDEX IF NOT EXISTS idx_study_cards_due ON study_cards(due_timestamp);
+
+         -- 6. Per-Page PDF Full-Text Search Virtual Table
+         CREATE VIRTUAL TABLE IF NOT EXISTS pdf_fts USING fts5(
+             asset_id UNINDEXED,
+             page_index UNINDEXED,
+             doc_source,
+             body,
+             tokenize = 'trigram'
+         );",
     )
     .map_err(|e| format!("Failed to initialize search schema: {}", e))?;
 
@@ -597,10 +606,20 @@ pub async fn search_index_pdf(
     let pattern = format!("{}#page=%", board_id);
     let _ = tx.execute("DELETE FROM board_fts WHERE board_id = ? OR board_id LIKE ?", [&board_id, &pattern]);
 
+    let asset_id = std::path::Path::new(&file_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(|stem| format!("{}.pdf", stem))
+        .unwrap_or_else(|| file_path.clone());
+    let _ = tx.execute("DELETE FROM pdf_fts WHERE asset_id = ?", [&asset_id]);
+
     let mut indexed_count = 0;
     {
         let mut stmt = tx.prepare(
             "INSERT INTO board_fts(board_id, title, content, tags) VALUES (?, ?, ?, ?)"
+        ).map_err(|e| e.to_string())?;
+        let mut pdf_stmt = tx.prepare(
+            "INSERT INTO pdf_fts(asset_id, page_index, doc_source, body) VALUES (?1, ?2, ?3, ?4)"
         ).map_err(|e| e.to_string())?;
 
         for (page_num, page_text) in &pages_data {
@@ -608,6 +627,9 @@ pub async fn search_index_pdf(
             let page_title = format!("{} (Page {})", title, page_num);
             stmt.execute([&page_target_id, &page_title, page_text, &pdf_tags])
                 .map_err(|e| format!("FTS insert failed on page {}: {}", page_num, e))?;
+            let page_index = page_num.saturating_sub(1);
+            pdf_stmt.execute(params![&asset_id, page_index, &title, page_text])
+                .map_err(|e| format!("pdf_fts insert failed on page {}: {}", page_num, e))?;
             indexed_count += 1;
         }
     }

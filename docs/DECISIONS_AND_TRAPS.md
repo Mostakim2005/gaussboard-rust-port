@@ -487,3 +487,34 @@ flowchart LR
   * `.github/workflows/tauri-android.yml` -> `discover-branches`, `GaussBoard-Rust-Tauri-v`
   * `scripts/smoke.js` -> `createAppHarness`
   * `src/js/platform/tauri-board.js` -> `menuLabels`
+
+### [DECISION: Virtualized-Pdf-Page-Architecture-Over-Native-Cpp-Pdfium] | Aliases: pdf-page, HTTP 206 range streaming, pdf-cache.js, tauri-board envelope, double rotation
+> **1-Line Summary:** Adopted a pure-Rust content-addressed HTTP 206 byte-range server paired with a vendored PDF.js multi-LOD/tile cache (`type: 'pdf-page'`) instead of linking native C++ `pdfium`, preserving zero NDK/MSVC CI fragility (TRAP 5) while eliminating 160 MB Base64 JSON bloat.
+* **Decision Maker:** `[DECIDED BY: HUMAN + PRINCIPAL ARCHITECT AUDIT]`
+* **Original User Intention:** Prevent multi-hundred-page PDFs from inflating `.gaussboard` board files to 80-160 MB or blowing out WebView VRAM, while keeping audio-ink timestamps (`p.t`), Study Tape, LAN sync, and cross-platform Android/Windows builds rock-solid.
+* **Key Traps Resolved During Principal Architect Audit:**
+  1. **`tauri-board.js` Return Envelope Mismatch:** Fixed `importToPdf` and `exportPdf` returning raw `Uint8Array` instead of `{ ok: true, data: Uint8Array, engine: 'native' }`, which broke `if (!res.ok)` callers in `insert.js` and `export.js`, and wired missing `openDialog`/`saveDialog`/`readFile`/`writeFile` bridges.
+  2. **Bundler-Free ES Module Specifiers:** Native browser ES modules cannot resolve `'pdfjs-dist'`; `pdf-cache.js` imports `../../vendor/pdf.min.mjs` directly with `workerSrc`, `cMapUrl`, `standardFontDataUrl`, and headless Node.js loader resolution in `scripts/smoke.js`.
+  3. **No Double Rotation in `drawPdfPage`:** `drawObject()` already translates and rotates around `boundsOf(o)` center before dispatching to `drawPdfPage()`, so `drawPdfPage()` must draw strictly in local unrotated coordinates.
+  4. **Frozen Ink Layer Invalidation:** Async PDF LOD/tile renders invoke `onload` (`_onImgLoad`), clearing `this._ink = null` in `Surface` so cached scenes repaint with crisp PDF bitmaps immediately upon completion.
+  5. **Protocol `HEAD` / `OPTIONS` & Dual-Prefix Safety:** `protocol_app::handle_asset_stream` accepts both `__asset/` and `asset/` prefixes and short-circuits `OPTIONS` and `HEAD` before touching range/full reads so 80 MB PDFs are never loaded into memory on length probes.
+* **Visual Comparison:**
+```mermaid
+flowchart LR
+    subgraph Old["Legacy Eager Rasterization"]
+        O1["100-page PDF"] -->|"Render all @ 2x PNG"| O2["120 MB Base64 strings inside board JSON"]
+        O2 -->|"Unbounded GPU textures"| O3["OOM / Slow saves / Blurry at 4x zoom"]
+    end
+    subgraph New["v7.0.0 Virtualized PDF Engine"]
+        N1["100-page PDF"] -->|"Single SHA-256 store"| N2["~15 KB board JSON (type: 'pdf-page' refs)"]
+        N2 -->|"HTTP 206 64KB Range + LOD/Tiles"| N3["< 64-192 MB LRU VRAM + Vector zoom clarity"]
+    end
+```
+* **Code Anchors (Grep Targets):**
+  * `src/js/core/pdf-cache.js` -> `PdfTextureManager`, `warmBoxForSyncRender`
+  * `src/js/core/render.js` -> `drawPdfPage`, `setRenderViewState`
+  * `src/js/core/surface.js` -> `drawScene`
+  * `src-tauri/src/protocol_app.rs` -> `handle_asset_stream`
+  * `src-tauri/src/assets.rs` -> `pdf_ingest_path`, `pdf_ingest_bytes`, `assets_read_raw`
+  * `src/js/platform/tauri-board.js` -> `importToPdf`, `exportPdf`, `pdf`
+

@@ -286,6 +286,71 @@ pub async fn sync_send<R: Runtime>(
     let my_ident = mgr.identity.read().clone();
     let my_port = mgr.http_port.load(Ordering::SeqCst);
 
+    let _ = app.emit("sync:sendProgress", json!({ "phase": "sending", "peerId": peer_id }));
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(SEND_TIMEOUT_MS + 5000))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut asset_ids = crate::bundle::collect_external_asset_ids(&board);
+    if let Some(inner_doc) = board.get("board").or_else(|| board.get("doc")) {
+        asset_ids.extend(crate::bundle::collect_external_asset_ids(inner_doc));
+    }
+    if let Some(linked) = board.get("linkedBoards") {
+        if let Some(arr) = linked.as_array() {
+            for item in arr {
+                asset_ids.extend(crate::bundle::collect_external_asset_ids(item));
+                if let Some(inner) = item.get("board").or_else(|| item.get("doc")) {
+                    asset_ids.extend(crate::bundle::collect_external_asset_ids(inner));
+                }
+            }
+        } else if let Some(obj) = linked.as_object() {
+            for (_k, item) in obj {
+                asset_ids.extend(crate::bundle::collect_external_asset_ids(item));
+                if let Some(inner) = item.get("board").or_else(|| item.get("doc")) {
+                    asset_ids.extend(crate::bundle::collect_external_asset_ids(inner));
+                }
+            }
+        }
+    }
+
+    let assets_dir = mgr.app_state.assets_dir();
+    for asset_id in asset_ids {
+        let direct = assets_dir.join(&asset_id);
+        let resolved = if direct.is_file() {
+            Some(direct)
+        } else {
+            crate::assets::resolve_asset_path(&assets_dir, &asset_id)
+        };
+        if let Some(path) = resolved {
+            if let Ok(raw_bytes) = std::fs::read(&path) {
+                let asset_aad = json!({
+                    "from": my_ident.device_id,
+                    "kind": "asset",
+                    "assetId": asset_id,
+                    "v": 1
+                });
+                let asset_env = seal_envelope(&device_key, asset_aad, &raw_bytes)?;
+                let asset_resp = client
+                    .post(format!("http://{}:{}/sync-asset", host, port))
+                    .header("X-GazBoard-From", &my_ident.device_id)
+                    .header("X-Asset-Id", &asset_id)
+                    .json(&asset_env)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Failed sending external asset {}: {}", asset_id, e))?;
+                if !asset_resp.status().is_success() {
+                    return Err(format!(
+                        "Peer rejected external asset {} (HTTP {})",
+                        asset_id,
+                        asset_resp.status()
+                    ));
+                }
+            }
+        }
+    }
+
     let aad = json!({
         "from": my_ident.device_id,
         "kind": "board",
@@ -296,13 +361,6 @@ pub async fn sync_send<R: Runtime>(
 
     let plaintext = serde_json::to_vec(&board).map_err(|e| e.to_string())?;
     let envelope = seal_envelope(&device_key, aad, &plaintext)?;
-
-    let _ = app.emit("sync:sendProgress", json!({ "phase": "sending", "peerId": peer_id }));
-
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(SEND_TIMEOUT_MS + 5000))
-        .build()
-        .map_err(|e| e.to_string())?;
 
     let resp: Value = client
         .post(format!("http://{}:{}/send", host, port))

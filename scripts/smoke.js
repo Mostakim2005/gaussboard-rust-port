@@ -14,12 +14,16 @@ const { register } = require('node:module');
 const ROOT = path.resolve(__dirname, '..');
 const SRC_DIR_URL = pathToFileURL(path.join(ROOT, 'src') + path.sep).href;
 
-// Register custom ESM loader hook to map `app://board/*` -> `src/*`
+// Register custom ESM loader hook to map `app://board/*` -> `src/*` and `pdf.worker.mjs` -> `pdf.worker.min.mjs`
 const loaderCode = `
 export async function resolve(specifier, context, nextResolve) {
   if (specifier.startsWith('app://board/')) {
     const rel = specifier.slice('app://board/'.length);
     const target = new URL(rel, ${JSON.stringify(SRC_DIR_URL)}).href;
+    return nextResolve(target, context);
+  }
+  if (specifier.endsWith('/pdf.worker.mjs') || specifier === './pdf.worker.mjs') {
+    const target = new URL('vendor/pdf.worker.min.mjs', ${JSON.stringify(SRC_DIR_URL)}).href;
     return nextResolve(target, context);
   }
   return nextResolve(specifier, context);
@@ -54,12 +58,16 @@ function installDomShim() {
     getBoundingClientRect() { return { left: 0, top: 0, width: 800, height: 600 }; },
     getContext() {
       return {
-        save() {}, restore() {}, scale() {}, translate() {}, rotate() {},
-        clearRect() {}, fillRect() {}, strokeRect() {}, beginPath() {},
+        canvas: this,
+        save() {}, restore() {}, scale() {}, translate() {}, rotate() {}, transform() {}, setTransform() {},
+        getTransform() { return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0, m11: 1, m12: 0, m21: 0, m22: 1, m41: 0, m42: 0 }; },
+        clearRect() {}, fillRect() {}, strokeRect() {}, beginPath() {}, clip() {},
         moveTo() {}, lineTo() {}, bezierCurveTo() {}, quadraticCurveTo() {},
         arc() {}, closePath() {}, stroke() {}, fill() {}, fillText() {},
         measureText(t) { return { width: String(t).length * 8 }; },
-        setLineDash() {}, drawImage() {}, createLinearGradient() { return { addColorStop() {} }; }
+        setLineDash() {}, drawImage() {}, createLinearGradient() { return { addColorStop() {} }; },
+        getImageData(_x, _y, w, h) { return { data: new Uint8ClampedArray((w || 1) * (h || 1) * 4), width: w || 1, height: h || 1 }; },
+        putImageData() {}
       };
     }
   });

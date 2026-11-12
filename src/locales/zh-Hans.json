@@ -2378,5 +2378,8 @@
  "Hold gesture mode": "按住手势模式",
  "Hold menu: Radial ring": "按住菜单：环形快捷盘",
  "Hold menu: Classic list": "按住菜单：经典列表",
- "Hold gestures disabled": "按住手势已禁用"
+ "Hold gestures disabled": "按住手势已禁用",
+ "Importing PDF…": "正在导入 PDF…",
+ "Preparing PDF pages for export…": "正在准备导出 PDF 页面…",
+ "PDF file not found": "未找到 PDF 文件"
 }

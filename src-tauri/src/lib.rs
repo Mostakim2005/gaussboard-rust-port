@@ -143,7 +143,7 @@ pub fn run() {
                 .unwrap_or_else(|_| user_data_dir.clone());
 
             let app_state = AppState::new(user_data_dir.clone(), doc_dir);
-            let sync_mgr = LanSyncManager::new(user_data_dir.clone());
+            let sync_mgr = LanSyncManager::new(user_data_dir.clone(), app_state.clone());
 
             let db_pool = search::init_search_db(user_data_dir)
                 .unwrap_or_else(|e| {
@@ -201,7 +201,12 @@ pub fn run() {
             assets::assets_put,
             assets::assets_get,
             assets::assets_have,
+            assets::assets_delete,
+            assets::assets_put_binary,
             assets::assets_put_binary_direct,
+            assets::assets_read_raw,
+            assets::pdf_ingest_path,
+            assets::pdf_ingest_bytes,
             recording::recording_start,
             recording::recording_append_chunk,
             recording::recording_finish,

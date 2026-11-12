@@ -2378,5 +2378,8 @@
  "Hold gesture mode": "Modo de gesto de mantener pulsado",
  "Hold menu: Radial ring": "Menú al mantener pulsado: Anillo radial",
  "Hold menu: Classic list": "Menú al mantener pulsado: Lista clásica",
- "Hold gestures disabled": "Gestos de mantener pulsado desactivados"
+ "Hold gestures disabled": "Gestos de mantener pulsado desactivados",
+ "Importing PDF…": "Importando PDF…",
+ "Preparing PDF pages for export…": "Preparando páginas PDF para exportar…",
+ "PDF file not found": "Archivo PDF no encontrado"
 }

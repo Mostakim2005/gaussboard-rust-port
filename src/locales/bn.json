@@ -2378,5 +2378,8 @@
  "Hold gesture mode": "চেপে ধরার জেসচার মোড",
  "Hold menu: Radial ring": "চেপে ধরার মেনু: গোলাকার রিং",
  "Hold menu: Classic list": "চেপে ধরার মেনু: ক্লাসিক তালিকা",
- "Hold gestures disabled": "চেপে ধরার জেসচার নিষ্ক্রিয়"
+ "Hold gestures disabled": "চেপে ধরার জেসচার নিষ্ক্রিয়",
+ "Importing PDF…": "PDF ইমপোর্ট করা হচ্ছে…",
+ "Preparing PDF pages for export…": "এক্সপোর্টের জন্য PDF পেজ প্রস্তুত করা হচ্ছে…",
+ "PDF file not found": "PDF ফাইল পাওয়া যায়নি"
 }

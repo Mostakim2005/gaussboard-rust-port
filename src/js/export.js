@@ -16,6 +16,7 @@ import { connectorSvg } from './core/connectors.js';
 import { loadZip } from './board-export.js';
 import { calligraphySvgPath, brushRuns, fountainRuns } from './core/ink.js';
 import { isMarkdown, renderMarkdownToHtml } from './core/markdown.js';
+import { pdfCache } from './core/pdf-cache.js';
 
 /**
  * What a bitmap or vector export covers.
@@ -51,6 +52,10 @@ export async function exportPng(app, { scale = 2, transparent = false, selection
 
   const maxPx = 12000;
   const s = Math.min(scale, maxPx / Math.max(box.w, box.h));
+  const objects = app.store.objects || [];
+  if (objects.some((o) => o && o.type === 'pdf-page')) {
+    await pdfCache.warmBoxForSyncRender(objects, box, scale || 2);
+  }
   // the ruling prints with the page; a selection is a cut-out and comes without it
   const canvas = app.surface.renderTo(box, s, !transparent, !transparent && !(selectionOnly && app.surface.selection.size));
   // the line is sized like small writing on the board itself, so it reads at any export size
@@ -633,10 +638,14 @@ export async function exportPdf(app, opts) {
     return first.has(b.id) ? first.get(b.id) : null;
   };
 
-  const progress = app.showProgress(t('Exporting PDF'), n > 1 ? t('{n} of {total} pages', { n: 0, total: n }) : t('Rendering…'));
+  const progress = app.showProgress(t('Exporting PDF'), n > 1 ? t('{n} of {total} pages', { n: 0, total: n }) : t('Preparing PDF pages for export…'));
   try {
     const pages = [];
     for (const sh of sheets) {
+      const pageObjects = sh.src?.store?.objects || app.store.objects || [];
+      if (pageObjects.some((o) => o && o.type === 'pdf-page')) {
+        await pdfCache.warmBoxForSyncRender(pageObjects, sh.box, 2.0);
+      }
       const canvas = sh.src.main ? app.surface.renderTo(sh.box, sh.q, true) : renderOther(app, sh.src, sh.box, sh.q);
       // "Made with GazBoard", 2.6 mm high, 4 mm in from the corner of the sheet's picture
       const pxPerMm = canvas.width / Math.min(sh.wMm, L.innerW);
@@ -728,6 +737,85 @@ export function exportable(doc) {
   }) };
 }
 
+function dataUrlToBytes(dataUrl) {
+  if (!dataUrl || typeof dataUrl !== 'string') return null;
+  const comma = dataUrl.indexOf(',');
+  const b64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+  try {
+    if (typeof atob === 'function') {
+      const bin = atob(b64);
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
+    }
+    if (typeof Buffer !== 'undefined') {
+      return new Uint8Array(Buffer.from(b64, 'base64'));
+    }
+  } catch {}
+  return null;
+}
+
+function bytesToDataUrl(bytes, mime = 'application/pdf') {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  if (typeof Buffer !== 'undefined') {
+    return `data:${mime};base64,${Buffer.from(u8).toString('base64')}`;
+  }
+  let bin = '';
+  for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+  return `data:${mime};base64,${btoa(bin)}`;
+}
+
+export async function readPdfAssetBytes(assetId) {
+  if (!assetId) return null;
+  try {
+    if (typeof window.board?.assets?.readRaw === 'function') {
+      const raw = await window.board.assets.readRaw(assetId);
+      if (raw && raw.byteLength > 0) return raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+    }
+  } catch {}
+  const cached = pdfCache?.rawBuffers?.get?.(assetId);
+  if (cached && cached.byteLength > 0) return cached instanceof Uint8Array ? cached : new Uint8Array(cached);
+  try {
+    if (typeof window.board?.assets?.get === 'function') {
+      const val = await window.board.assets.get(assetId);
+      if (val instanceof Uint8Array && val.byteLength > 0) return val;
+      if (val instanceof ArrayBuffer && val.byteLength > 0) return new Uint8Array(val);
+      if (typeof val === 'string') {
+        const decoded = dataUrlToBytes(val);
+        if (decoded && decoded.byteLength > 0) return decoded;
+      }
+    }
+  } catch {}
+  try {
+    const rec = await window.board?.recording?.readAsset?.(assetId);
+    if (rec && rec.byteLength > 0) return rec instanceof Uint8Array ? rec : new Uint8Array(rec);
+  } catch {}
+  return null;
+}
+
+export async function restoreZipAssets(zip) {
+  if (!zip || !zip.files) return;
+  for (const [relPath, fileEntry] of Object.entries(zip.files)) {
+    if (fileEntry.dir || !relPath.startsWith('assets/')) continue;
+    const assetId = relPath.slice('assets/'.length);
+    if (!assetId || /[\\/]/.test(assetId)) continue;
+    try {
+      const assetBytes = await fileEntry.async('uint8array');
+      if (window.board?.assets?.putBinaryDirect) {
+        await window.board.assets.putBinaryDirect(assetId, assetBytes);
+      } else if (window.board?.assets?.put && assetId.toLowerCase().endsWith('.pdf')) {
+        await window.board.assets.put(assetId, bytesToDataUrl(assetBytes, 'application/pdf'));
+      }
+      if (assetId.toLowerCase().endsWith('.pdf')) {
+        if (window.board?.pdf?.ingestBytes) {
+          try { await window.board.pdf.ingestBytes(assetBytes); } catch {}
+        }
+        pdfCache.registerBuffer(assetId, assetBytes);
+      }
+    } catch {}
+  }
+}
+
 export async function saveBoardFile(app) {
   const filePath = await window.board.saveDialog({
     title: t('Save a copy'),
@@ -738,19 +826,33 @@ export async function saveBoardFile(app) {
 
   const doc = exportable(app.store.toJSON({ app: 'GaussBoard', version: 1 }));
   const hasAudio = Array.isArray(doc.audioTracks) && doc.audioTracks.length > 0;
+  const pdfAssetIds = [...new Set((doc.objects || []).filter((o) => o && o.type === 'pdf-page' && o.assetId).map((o) => o.assetId))];
+  const hasPdfAssets = pdfAssetIds.length > 0;
 
-  if (hasAudio) {
+  if (hasAudio || hasPdfAssets) {
     const Zip = await loadZip();
     const zip = new Zip();
     zip.file('board.json', JSON.stringify(doc, null, 0));
-    for (const tr of doc.audioTracks) {
-      if (!tr?.assetId) continue;
-      try {
-        const audioBuf = await window.board?.recording?.readAsset?.(tr.assetId);
-        if (audioBuf && audioBuf.byteLength > 0) {
-          zip.file('assets/' + tr.assetId, new Uint8Array(audioBuf));
-        }
-      } catch {}
+    if (hasAudio) {
+      for (const tr of doc.audioTracks) {
+        if (!tr?.assetId) continue;
+        try {
+          const audioBuf = await window.board?.recording?.readAsset?.(tr.assetId);
+          if (audioBuf && audioBuf.byteLength > 0) {
+            zip.file('assets/' + tr.assetId, new Uint8Array(audioBuf));
+          }
+        } catch {}
+      }
+    }
+    if (hasPdfAssets) {
+      for (const assetId of pdfAssetIds) {
+        try {
+          const rawBytes = await readPdfAssetBytes(assetId);
+          if (rawBytes && rawBytes.byteLength > 0) {
+            zip.file(`assets/${assetId}`, rawBytes instanceof Uint8Array ? rawBytes : new Uint8Array(rawBytes));
+          }
+        } catch {}
+      }
     }
     const bytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 1 } });
     await window.board.writeFile(filePath, bytes.buffer);
@@ -784,17 +886,7 @@ export async function openBoardFile(app, opts = {}) {
     const boardEntry = zip.file('board.json');
     if (!boardEntry) throw new Error(t('Invalid .gaussboard archive: missing board.json'));
     data = JSON.parse(await boardEntry.async('text'));
-    if (window.board?.assets?.putBinaryDirect) {
-      for (const [relPath, fileEntry] of Object.entries(zip.files || {})) {
-        if (fileEntry.dir || !relPath.startsWith('assets/')) continue;
-        const assetId = relPath.slice('assets/'.length);
-        if (!assetId || /[\\/]/.test(assetId)) continue;
-        try {
-          const assetBytes = await fileEntry.async('uint8array');
-          await window.board.assets.putBinaryDirect(assetId, assetBytes);
-        } catch {}
-      }
-    }
+    await restoreZipAssets(zip);
   } else {
     data = JSON.parse(new TextDecoder().decode(buf));
   }

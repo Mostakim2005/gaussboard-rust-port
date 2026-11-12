@@ -1,7 +1,8 @@
 // The canvas view: sizing, the draw loop, culling, overlays.
 
 import { Camera } from './camera.js';
-import { drawBackground, drawRuling, drawObject, drawSelection, drawMemberOutline, drawLockBadge, drawGroupHint, drawLockedOutline, FONT, setDarkBoard, isDarkBoard, setPageColor, faceOf, inkPaint } from './render.js';
+import { drawBackground, drawRuling, drawObject, drawSelection, drawMemberOutline, drawLockBadge, drawGroupHint, drawLockedOutline, FONT, setDarkBoard, isDarkBoard, setPageColor, setRenderViewState, faceOf, inkPaint } from './render.js';
+import { pdfCache } from './pdf-cache.js';
 import { worldBounds, boundsOf } from './store.js';
 import { pageRects, pageMarginRects, pageIndexForBox, pageIndexForBoxIn, stripBounds } from './pages.js';
 import { boxesIntersect } from './util.js';
@@ -425,8 +426,9 @@ export class Surface {
   }
 
   /** Background and every object, in world space. No selection chrome. */
-  drawScene(ctx, w = this.width, h = this.height, onload = () => this.invalidate(), clip = null, filter = null) {
+  drawScene(ctx, w = this.width, h = this.height, onload = () => { this._ink = null; this.invalidate(); }, clip = null, filter = null) {
     const cam = this.cam;
+    pdfCache.beginFrame();
     this.screenTransform(ctx);
     setPageColor(this.store.doc.background?.color);
     const pages = this.store.doc.pages;
@@ -468,6 +470,8 @@ export class Surface {
     const view = cam.viewport(w, h);
     const pad = 64 / cam.z;
     const vbox = { x: view.x - pad, y: view.y - pad, w: view.w + pad * 2, h: view.h + pad * 2 };
+    const preloadBox = { x: vbox.x, y: vbox.y - vbox.h * 0.5, w: vbox.w, h: vbox.h * 2.0 };
+    setRenderViewState(cam.z, vbox);
     // Text boxes, sticky notes and shapes have shadows and rounded padding
     // that reach a few pixels outside their stored x/y/w/h.
     const cpad = 24 / cam.z;
@@ -489,7 +493,12 @@ export class Surface {
       if (!o) continue;
       if (filter && !filter(o)) continue;
       const wb = worldBounds(o);
-      if (!boxesIntersect(vbox, wb)) continue;
+      if (!boxesIntersect(vbox, wb)) {
+        if (o.type === 'pdf-page' && !o.hidden && boxesIntersect(preloadBox, wb)) {
+          pdfCache.getPageTexture(o.assetId, o.pageIndex || 0, 0.25, onload, 0);
+        }
+        continue;
+      }
       // Outside the band being repainted: its pixels are already right.
       if (clipHit && !boxesIntersect(clipHit, wb)) continue;
       visible.push(o);
@@ -817,7 +826,7 @@ export class Surface {
       const isReplay = this.app?.replayEngine?.active || (this.app?.audioBar?.visible && this.app?.replayEngine?.track);
       const activeTrackId = isReplay ? this.app.replayEngine.track?.id : null;
       const replayFilter = replaySceneFilter(activeTrackId, this.app?.settings);
-      this.drawScene(ctx, w, h, () => this.invalidate(), this._band, replayFilter);
+      this.drawScene(ctx, w, h, () => { this._ink = null; this.invalidate(); }, this._band, replayFilter);
     } else if (this._ink && this._ink.key === this.freezeKey()) {
       /*
        * Nothing has changed since the copy was taken, so blit it.
@@ -1385,6 +1394,7 @@ export class Surface {
     c.width = Math.max(1, Math.round(box.w * scale));
     c.height = Math.max(1, Math.round(box.h * scale));
     const ctx = c.getContext('2d');
+    setRenderViewState(scale || 2, box);
     if (background) {
       ctx.fillStyle = this.store.doc.background.color || '#ffffff';
       ctx.fillRect(0, 0, c.width, c.height);

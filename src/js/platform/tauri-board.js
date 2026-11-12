@@ -45,8 +45,108 @@
     return [];
   }
 
+  function toUint8Array(buf) {
+    if (!buf) return new Uint8Array(0);
+    if (buf instanceof Uint8Array) return buf;
+    if (buf instanceof ArrayBuffer) return new Uint8Array(buf);
+    if (ArrayBuffer.isView(buf)) {
+      return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+    }
+    if (Array.isArray(buf)) return new Uint8Array(buf);
+    return new Uint8Array(0);
+  }
+
+  function uint8ToBase64(uint8Array) {
+    const u8 = toUint8Array(uint8Array);
+    const CHUNK = 0x8000;
+    const parts = [];
+    for (let i = 0; i < u8.length; i += CHUNK) {
+      parts.push(String.fromCharCode.apply(null, u8.subarray(i, i + CHUNK)));
+    }
+    return btoa(parts.join(''));
+  }
+
+  let _webFiles = null;
+  const _fallbackFiles = new Map();
+  let _fallbackSeq = 0;
+
+  async function ensureWebFiles() {
+    if (_webFiles) return _webFiles;
+    try {
+      _webFiles = await import('./web-files.js');
+    } catch (_) {}
+    return _webFiles;
+  }
+  ensureWebFiles();
+
+  function registerFileToken(file) {
+    if (_webFiles && typeof _webFiles.registerSessionFile === 'function') {
+      return _webFiles.registerSessionFile(file);
+    }
+    const token = `virt://session-${++_fallbackSeq}/${String(file?.name || 'file').replace(/[\\/]/g, '_')}`;
+    _fallbackFiles.set(token, file);
+    return token;
+  }
+
+  function resolveFileOrigin(token) {
+    if (_webFiles && typeof _webFiles.fileOrigin === 'function') {
+      const orig = _webFiles.fileOrigin(token);
+      if (orig) return orig;
+    }
+    const f = _fallbackFiles.get(token);
+    if (!f) return typeof token === 'string' ? token : null;
+    return 'web:' + (f.name || 'file') + '|' + (f.size || 0) + '|' + (f.lastModified || 0);
+  }
+
+  async function readFileHelper(filePath) {
+    if (_fallbackFiles.has(filePath)) {
+      const f = _fallbackFiles.get(filePath);
+      if (f && typeof f.arrayBuffer === 'function') return await f.arrayBuffer();
+    }
+    const wf = await ensureWebFiles();
+    const reader = wf?.readVirtualFile || wf?.getFileByHandle;
+    if (reader) {
+      return await reader(filePath);
+    }
+    throw new Error('File not found: ' + filePath);
+  }
+
+  async function writeFileHelper(filePath, data) {
+    const wf = await ensureWebFiles();
+    const writer = wf?.writeVirtualFile || wf?.writePendingSave;
+    if (writer) {
+      return await writer(filePath, data);
+    }
+    return false;
+  }
+
+  async function openDialogHelper(opts = {}) {
+    const wf = await ensureWebFiles();
+    const opener = wf?.openFileDialog || wf?.webOpenDialog;
+    if (opener) {
+      return await opener(opts);
+    }
+    return [];
+  }
+
+  async function saveDialogHelper(opts = {}) {
+    const wf = await ensureWebFiles();
+    const saver = wf?.saveFileDialog || wf?.webSaveDialog;
+    if (saver) {
+      return await saver(opts);
+    }
+    return opts?.defaultPath || 'untitled';
+  }
+
   window.board = {
     info: () => invoke('app_info'),
+
+    openDialog: (opts) => openDialogHelper(opts),
+    saveDialog: (opts) => saveDialogHelper(opts),
+    readFile: (p) => readFileHelper(p),
+    writeFile: (filePath, data) => writeFileHelper(filePath, data),
+    pathForFile: (f) => registerFileToken(f),
+    fileOrigin: (p) => resolveFileOrigin(p),
 
     boards: {
       list: () => invoke('boards_list'),
@@ -77,8 +177,29 @@
       put: (dataUrl) => invoke('assets_put', { dataUrl }),
       get: (id) => invoke('assets_get', { id }),
       have: (ids) => invoke('assets_have', { ids: Array.isArray(ids) ? ids : [] }),
-      putBinaryDirect: (assetId, buffer) =>
-        invoke('assets_put_binary_direct', { assetId, buffer: toByteArray(buffer) })
+      readRaw: async (id) => {
+        const bytes = await invoke('assets_read_raw', { id });
+        return new Uint8Array(bytes);
+      },
+      putBinaryDirect: async (id, uint8Array) =>
+        invoke('assets_put_binary', { id, dataB64: uint8ToBase64(uint8Array) })
+    },
+
+    pdf: {
+      ingestPath: async (filePath) => {
+        if (typeof filePath === 'string' && filePath.startsWith('virt://')) {
+          const buf = await readFileHelper(filePath);
+          const bytes = Array.from(new Uint8Array(buf));
+          return invoke('pdf_ingest_bytes', { bytes });
+        }
+        return invoke('pdf_ingest_path', { path: filePath });
+      },
+      ingestBytes: async (uint8Array) => {
+        const bytes = uint8Array instanceof Uint8Array
+          ? Array.from(uint8Array)
+          : Array.from(new Uint8Array(uint8Array));
+        return invoke('pdf_ingest_bytes', { bytes });
+      }
     },
 
     recording: {
@@ -86,7 +207,11 @@
       appendChunk: (sessionId, chunk) =>
         invoke('recording_append_chunk', { sessionId, chunk: toByteArray(chunk) }),
       finish: (sessionId, durationMs) =>
-        invoke('recording_finish', { sessionId, durationMs: Math.round(durationMs || 0) })
+        invoke('recording_finish', { sessionId, durationMs: Math.round(durationMs || 0) }),
+      readAsset: async (id) => {
+        const bytes = await invoke('assets_read_raw', { id });
+        return new Uint8Array(bytes);
+      }
     },
 
     sync: {
@@ -136,13 +261,41 @@
     clipboardSignature: () => cachedClipboardSig,
 
     importToPdf: async (filePath, opts) => {
-      const bytes = await invoke('import_to_pdf', { filePath, opts: opts || {} });
-      return new Uint8Array(bytes);
+      try {
+        let arg = filePath;
+        const mergedOpts = { ...(opts || {}) };
+        if (mergedOpts.bytes) {
+          arg = toByteArray(mergedOpts.bytes);
+          if (!mergedOpts.name && typeof filePath === 'string') {
+            mergedOpts.name = filePath.split(/[\\/]/).pop();
+          }
+          delete mergedOpts.bytes;
+        } else if (typeof filePath === 'string' && filePath.startsWith('virt://')) {
+          const buf = await readFileHelper(filePath);
+          const name = filePath.split(/[\\/]/).pop() || 'document.pdf';
+          if (/\.pdf$/i.test(name)) {
+            const data = new Uint8Array(buf);
+            return { ok: true, data, engine: 'native', byteLength: data.byteLength, name };
+          }
+          arg = Array.from(new Uint8Array(buf));
+          mergedOpts.name = name;
+        }
+        const bytes = await invoke('import_to_pdf', { filePath: arg, opts: mergedOpts });
+        const data = new Uint8Array(bytes);
+        return { ok: true, data, engine: 'native', byteLength: data.byteLength };
+      } catch (e) {
+        return { ok: false, error: String(e?.message || e) };
+      }
     },
     importTakesBytes: true,
     exportPdf: async (payload) => {
-      const bytes = await invoke('export_pdf', { payload });
-      return new Uint8Array(bytes);
+      try {
+        const bytes = await invoke('export_pdf', { payload });
+        const data = new Uint8Array(bytes);
+        return { ok: true, data, engine: 'native', byteLength: data.byteLength };
+      } catch (e) {
+        return { ok: false, error: String(e?.message || e) };
+      }
     },
 
     openReleases: (url) => invoke('shell_open_external', { url }),

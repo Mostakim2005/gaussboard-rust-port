@@ -1,5 +1,6 @@
 // Export chosen library boards without opening them or changing the active board.
-import { exportable, safeName } from './export.js';
+import { exportable, safeName, readPdfAssetBytes, restoreZipAssets } from './export.js';
+import { pdfCache } from './core/pdf-cache.js';
 import { t } from './i18n.js';
 
 let zipLibrary;
@@ -13,6 +14,35 @@ export async function loadZip() {
     document.head.appendChild(script);
   });
   return zipLibrary;
+}
+
+async function collectBoardAssetEntries(doc) {
+  const entries = [];
+  const seen = new Set();
+  if (Array.isArray(doc?.audioTracks)) {
+    for (const tr of doc.audioTracks) {
+      if (!tr?.assetId || seen.has(tr.assetId)) continue;
+      seen.add(tr.assetId);
+      try {
+        const audioBuf = await window.board?.recording?.readAsset?.(tr.assetId);
+        if (audioBuf && audioBuf.byteLength > 0) {
+          entries.push({ name: `assets/${tr.assetId}`, data: new Uint8Array(audioBuf) });
+        }
+      } catch {}
+    }
+  }
+  const pdfObjects = (doc?.objects || []).filter((o) => o && o.type === 'pdf-page' && o.assetId);
+  for (const o of pdfObjects) {
+    if (seen.has(o.assetId)) continue;
+    seen.add(o.assetId);
+    try {
+      const rawBytes = await readPdfAssetBytes(o.assetId);
+      if (rawBytes && rawBytes.byteLength > 0) {
+        entries.push({ name: `assets/${o.assetId}`, data: rawBytes instanceof Uint8Array ? rawBytes : new Uint8Array(rawBytes) });
+      }
+    } catch {}
+  }
+  return entries;
 }
 
 export async function exportBoards(app, ids) {
@@ -31,7 +61,9 @@ export async function exportBoards(app, ids) {
     let name = base + '.gaussboard', suffix = 2;
     while (names.has(name.toLowerCase())) name = `${base} (${suffix++}).gaussboard`;
     names.add(name.toLowerCase());
-    files.push({ name, content: JSON.stringify(exportable(doc)) });
+    const cleanDoc = exportable(doc);
+    const assetEntries = await collectBoardAssetEntries(cleanDoc);
+    files.push({ name, content: JSON.stringify(cleanDoc), assetEntries });
   }
   const multiple = files.length > 1;
   const path = await window.board.saveDialog({
@@ -44,10 +76,69 @@ export async function exportBoards(app, ids) {
   if (multiple) {
     const Zip = await loadZip();
     const zip = new Zip();
-    for (const file of files) zip.file(file.name, file.content);
+    for (const file of files) {
+      if (file.assetEntries && file.assetEntries.length > 0) {
+        const inner = new Zip();
+        inner.file('board.json', file.content);
+        for (const entry of file.assetEntries) {
+          inner.file(entry.name, entry.data);
+          zip.file(entry.name, entry.data);
+        }
+        const innerBytes = await inner.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 1 } });
+        zip.file(file.name, innerBytes);
+      } else {
+        zip.file(file.name, file.content);
+      }
+    }
     bytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 1 } });
-  } else bytes = new TextEncoder().encode(files[0].content);
+  } else if (files[0].assetEntries && files[0].assetEntries.length > 0) {
+    const Zip = await loadZip();
+    const zip = new Zip();
+    zip.file('board.json', files[0].content);
+    for (const entry of files[0].assetEntries) {
+      zip.file(entry.name, entry.data);
+    }
+    bytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 1 } });
+  } else {
+    bytes = new TextEncoder().encode(files[0].content);
+  }
   await window.board.writeFile(path, bytes);
   app.toast(multiple ? t('Exported {n} boards', { n: files.length }) : t('Exported {n} board', { n: files.length }), 'check');
   return path;
+}
+
+export async function importBoards(app, buf) {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  if (bytes[0] === 0x50 && bytes[1] === 0x4B && bytes[2] === 0x03 && bytes[3] === 0x04) {
+    const Zip = await loadZip();
+    const zip = await Zip.loadAsync(buf);
+    await restoreZipAssets(zip);
+    const boardEntry = zip.file('board.json');
+    if (boardEntry) {
+      const data = JSON.parse(await boardEntry.async('text'));
+      await app.loadBoard(data, { asCopy: false });
+      return [data];
+    }
+    const imported = [];
+    for (const [relPath, fileEntry] of Object.entries(zip.files || {})) {
+      if (fileEntry.dir || !/\.(gaussboard|gazboard|json)$/i.test(relPath)) continue;
+      const entryBytes = await fileEntry.async('uint8array');
+      if (entryBytes[0] === 0x50 && entryBytes[1] === 0x4B) {
+        const innerZip = await Zip.loadAsync(entryBytes);
+        await restoreZipAssets(innerZip);
+        const innerBoard = innerZip.file('board.json');
+        if (innerBoard) {
+          const data = JSON.parse(await innerBoard.async('text'));
+          imported.push(data);
+        }
+      } else {
+        const data = JSON.parse(new TextDecoder().decode(entryBytes));
+        imported.push(data);
+      }
+    }
+    return imported;
+  }
+  const data = JSON.parse(new TextDecoder().decode(bytes));
+  await app.loadBoard(data, { asCopy: false });
+  return [data];
 }

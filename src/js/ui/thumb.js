@@ -16,11 +16,49 @@
 
 import { drawObject, isDarkBoard, setDarkBoard } from '../core/render.js';
 import { boundsOf } from '../core/store.js';
+import { pdfCache } from '../core/pdf-cache.js';
 
 // A board with tens of thousands of objects would take a visible pause to draw
 // into a 170px box, and the dialog must appear at once. Past this many, the
 // picture is made from the first slice; at this size nobody can tell.
 const MAX_OBJECTS = 3000;
+
+function drawPdfPageThumb(ctx, o, onload) {
+  const x = o.x || 0, y = o.y || 0, w = o.w || 0, h = o.h || 0;
+  if (!(w > 0 && h > 0)) return;
+  ctx.save();
+  if (o.rotation) {
+    const cx = x + w / 2, cy = y + h / 2;
+    ctx.translate(cx, cy);
+    ctx.rotate(o.rotation);
+    ctx.translate(-cx, -cy);
+  }
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = 'rgba(0,0,0,0.16)';
+  ctx.lineWidth = Math.max(1, Math.min(w, h) * 0.008);
+  ctx.strokeRect(x, y, w, h);
+
+  const pageIdx = o.pageIndex ?? ((o.docPage || 1) - 1);
+  const tex = o.assetId ? pdfCache?.getPageTexture?.(o.assetId, pageIdx, 0.25, onload, 0) : null;
+  if (tex && tex.bmp) {
+    ctx.drawImage(tex.bmp, x, y, w, h);
+  } else {
+    // Clean subtle page lines when texture is not yet in memory
+    ctx.fillStyle = 'rgba(96,94,92,0.14)';
+    const mx = x + w * 0.12;
+    const mw = w * 0.76;
+    const lineH = Math.max(2, h * 0.022);
+    const stepY = h * 0.075;
+    for (let i = 0; i < 9; i++) {
+      const ly = y + h * 0.14 + i * stepY;
+      if (ly + lineH > y + h * 0.88) break;
+      const lw = i === 0 ? mw * 0.55 : (i % 3 === 2 ? mw * 0.68 : mw);
+      ctx.fillRect(mx, ly, lw, lineH);
+    }
+  }
+  ctx.restore();
+}
 
 function paint(objects, w, h, onload, { bg = '#ffffff', dpr = 2, type } = {}) {
   const c = document.createElement('canvas');
@@ -39,6 +77,7 @@ function paint(objects, w, h, onload, { bg = '#ffffff', dpr = 2, type } = {}) {
   for (const o of list) {
     let b = null;
     try { b = boundsOf(o); } catch { b = null; }
+    if (!b && o.type === 'pdf-page') b = { x: o.x, y: o.y, w: o.w, h: o.h };
     if (!b || ![b.x, b.y, b.w, b.h].every((n) => Number.isFinite(n))) continue;
     box = box ? {
       x: Math.min(box.x, b.x), y: Math.min(box.y, b.y),
@@ -58,7 +97,10 @@ function paint(objects, w, h, onload, { bg = '#ffffff', dpr = 2, type } = {}) {
     (c.width - box.w * s) / 2 - box.x * s,
     (c.height - box.h * s) / 2 - box.y * s);
   for (const o of list) {
-    try { drawObject(ctx, o, onload); } catch { /* one bad object is not a broken dialog */ }
+    try {
+      if (o.type === 'pdf-page') drawPdfPageThumb(ctx, o, onload);
+      else drawObject(ctx, o, onload);
+    } catch { /* one bad object is not a broken dialog */ }
   }
   return out();
 }
