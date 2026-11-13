@@ -14,9 +14,40 @@ pub type DbPool = Pool<SqliteConnectionManager>;
 pub fn init_search_db(data_dir: PathBuf) -> Result<DbPool, String> {
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
     let db_path = data_dir.join("search_index.db");
-    let manager = SqliteConnectionManager::file(db_path);
-    let pool = Pool::new(manager).map_err(|e| format!("Failed to create SQLite connection pool: {}", e))?;
+    let manager = SqliteConnectionManager::file(db_path).with_init(|c| {
+        c.execute_batch("PRAGMA busy_timeout = 5000;")?;
+        Ok(())
+    });
+    let pool = Pool::builder()
+        .max_size(4)
+        .min_idle(Some(1))
+        .connection_timeout(std::time::Duration::from_secs(3))
+        .build(manager)
+        .map_err(|e| format!("Failed to create SQLite connection pool: {}", e))?;
 
+    init_schema_on_pool(&pool)?;
+    Ok(pool)
+}
+
+pub fn init_search_db_resilient(data_dir: PathBuf) -> DbPool {
+    if let Ok(pool) = init_search_db(data_dir) {
+        return pool;
+    }
+    if let Ok(pool) = init_search_db(std::env::temp_dir().join("GaussBoardSearch")) {
+        return pool;
+    }
+    let mem_manager = SqliteConnectionManager::memory();
+    if let Ok(pool) = Pool::builder().max_size(1).min_idle(Some(1)).build(mem_manager) {
+        let _ = init_schema_on_pool(&pool);
+        return pool;
+    }
+    Pool::builder()
+        .max_size(1)
+        .min_idle(Some(0))
+        .build_unchecked(SqliteConnectionManager::memory())
+}
+
+fn init_schema_on_pool(pool: &DbPool) -> Result<(), String> {
     let conn = pool.get().map_err(|e| e.to_string())?;
 
     conn.execute_batch(
@@ -101,7 +132,7 @@ pub fn init_search_db(data_dir: PathBuf) -> Result<DbPool, String> {
     )
     .map_err(|e| format!("Failed to initialize search schema: {}", e))?;
 
-    Ok(pool)
+    Ok(())
 }
 
 #[derive(Serialize, Deserialize, Debug)]

@@ -88,6 +88,13 @@ fn updates_note() -> Value {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let log_path = std::env::temp_dir().join("gaussboard-startup-panic.log");
+        let _ = std::fs::write(&log_path, format!("GaussBoard panic: {}\n", info));
+        default_hook(info);
+    }));
+
     let mut builder = tauri::Builder::default();
 
     #[cfg(desktop)]
@@ -111,26 +118,23 @@ pub fn run() {
 
     #[cfg(desktop)]
     {
-        if let Ok(shortcut_plugin) = tauri_plugin_global_shortcut::Builder::new()
-            .with_shortcuts(["Ctrl+Shift+Space", "Alt+G"])
-            .and_then(|b| {
-                Ok(b.with_handler(|app, _shortcut, event| {
+        builder = builder.plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
                     if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                         if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.unminimize();
                             let _ = w.show();
                             let _ = w.set_focus();
                             let _ = w.emit("app:quick-scratchpad", ());
                         }
                     }
                 })
-                .build())
-            })
-        {
-            builder = builder.plugin(shortcut_plugin);
-        }
+                .build(),
+        );
     }
 
-    builder
+    let run_result = builder
         .register_uri_scheme_protocol("app", protocol_app::handle_app_protocol)
         .setup(|app| {
             let user_data_dir = app
@@ -144,17 +148,21 @@ pub fn run() {
 
             let app_state = AppState::new(user_data_dir.clone(), doc_dir);
             let sync_mgr = LanSyncManager::new(user_data_dir.clone(), app_state.clone());
-
-            let db_pool = search::init_search_db(user_data_dir)
-                .unwrap_or_else(|e| {
-                    eprintln!("Warning: failed to init search db: {}", e);
-                    search::init_search_db(std::env::temp_dir().join("GaussBoardSearch"))
-                        .expect("Failed to initialize fallback search db")
-                });
+            let db_pool = search::init_search_db_resilient(user_data_dir);
 
             app.manage(app_state.clone());
             app.manage(sync_mgr);
             app.manage(db_pool);
+
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_global_shortcut::GlobalShortcutExt;
+                for hotkey in ["Ctrl+Shift+Space", "Alt+G"] {
+                    if let Err(err) = app.handle().global_shortcut().register(hotkey) {
+                        eprintln!("Warning: could not register global shortcut '{}': {}", hotkey, err);
+                    }
+                }
+            }
 
             splash::init_splash_bypass_and_watchdog(app.handle());
             win32_shell::spawn_win32_clipboard_listener(app.handle().clone());
@@ -259,6 +267,11 @@ pub fn run() {
             markdown_parser::markdown_to_html,
             power::get_power_status,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running GaussBoard Tauri application");
+        .run(tauri::generate_context!());
+
+    if let Err(err) = run_result {
+        let log_path = std::env::temp_dir().join("gaussboard-startup-panic.log");
+        let _ = std::fs::write(&log_path, format!("GaussBoard runtime error: {}\n", err));
+        panic!("error while running GaussBoard Tauri application: {}", err);
+    }
 }

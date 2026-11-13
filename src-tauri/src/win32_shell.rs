@@ -74,7 +74,7 @@ pub fn spawn_win32_clipboard_listener(app: tauri::AppHandle) {
             let _ = AddClipboardFormatListener(hwnd);
             let mut msg = MSG::default();
 
-            while GetMessageW(&mut msg, None, 0, 0).into() {
+            while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
                 if msg.message == WM_CLIPBOARDUPDATE {
                     // O(1) kernel sequence number avoids OpenClipboard contention
                     let seq = GetClipboardSequenceNumber();

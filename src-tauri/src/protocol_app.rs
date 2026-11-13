@@ -4,13 +4,12 @@
 // guaranteeing 100% standalone execution for portable single-EXE and installer releases.
 
 use include_dir::{include_dir, Dir};
-use std::io::SeekFrom;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 use tauri::{
     http::{header, Method, Request, Response, StatusCode},
     Manager, Runtime, UriSchemeContext,
 };
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 static EMBEDDED_SRC: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../src");
 
@@ -37,7 +36,7 @@ fn asset_mime_from_path(path: &Path) -> &'static str {
     }
 }
 
-pub async fn handle_asset_stream(
+pub fn handle_asset_stream(
     state: &crate::state::AppState,
     raw_id: &str,
     request: &Request<Vec<u8>>,
@@ -84,7 +83,7 @@ pub async fn handle_asset_stream(
             .unwrap();
     };
 
-    let mut file = match tokio::fs::File::open(&file_path).await {
+    let mut file = match std::fs::File::open(&file_path) {
         Ok(f) => f,
         Err(_) => {
             return Response::builder()
@@ -95,7 +94,7 @@ pub async fn handle_asset_stream(
         }
     };
 
-    let total_len = match file.metadata().await {
+    let total_len = match file.metadata() {
         Ok(m) => m.len(),
         Err(_) => {
             return Response::builder()
@@ -172,7 +171,7 @@ pub async fn handle_asset_stream(
                             .min(start + MAX_RANGE_CHUNK - 1)
                             .min(total_len - 1);
                         let chunk_len = (end - start + 1) as usize;
-                        if file.seek(SeekFrom::Start(start)).await.is_err() {
+                        if file.seek(SeekFrom::Start(start)).is_err() {
                             return Response::builder()
                                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                                 .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
@@ -180,7 +179,7 @@ pub async fn handle_asset_stream(
                                 .unwrap();
                         }
                         let mut buf = vec![0u8; chunk_len];
-                        if file.read_exact(&mut buf).await.is_err() {
+                        if file.read_exact(&mut buf).is_err() {
                             return Response::builder()
                                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                                 .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
@@ -222,7 +221,7 @@ pub async fn handle_asset_stream(
     }
 
     let mut bytes = Vec::with_capacity(total_len as usize);
-    if file.read_to_end(&mut bytes).await.is_err() {
+    if file.read_to_end(&mut bytes).is_err() {
         return Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
             .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
@@ -282,14 +281,7 @@ pub fn handle_app_protocol<R: Runtime>(
             .app_handle()
             .try_state::<std::sync::Arc<crate::state::AppState>>()
         {
-            return match tokio::runtime::Handle::try_current() {
-                Ok(handle) => std::thread::scope(|s| {
-                    s.spawn(|| handle.block_on(handle_asset_stream(&state, raw_id, &req)))
-                        .join()
-                        .unwrap()
-                }),
-                Err(_) => tauri::async_runtime::block_on(handle_asset_stream(&state, raw_id, &req)),
-            };
+            return handle_asset_stream(&state, raw_id, &req);
         }
     }
 
