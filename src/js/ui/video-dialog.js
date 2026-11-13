@@ -46,7 +46,7 @@ export function parseVideoUrl(rawUrl) {
       id,
       url: str,
       startTime,
-      embedUrl: `https://www.youtube-nocookie.com/embed/${id}?enablejsapi=1&autoplay=1${startParam}`,
+      embedUrl: `https://www.youtube-nocookie.com/embed/${id}?enablejsapi=1&autoplay=1&playsinline=1&rel=0${startParam}`,
       thumbUrl: `https://img.youtube.com/vi/${id}/hqdefault.jpg`,
       maxThumbUrl: `https://img.youtube.com/vi/${id}/maxresdefault.jpg`
     };
@@ -232,6 +232,13 @@ export function openVideoInsertDialog(app) {
   setTimeout(() => urlInput.focus(), 50);
 }
 
+/** Sort video bookmarks chronologically ascending by time in seconds. */
+export function sortBookmarks(bookmarks) {
+  if (!Array.isArray(bookmarks)) return [];
+  bookmarks.sort((a, b) => (Number(a?.time) || 0) - (Number(b?.time) || 0));
+  return bookmarks;
+}
+
 /**
  * Interactive Video Player Dialog with Full-Res Screenshot & Timestamp Bookmarking
  */
@@ -242,17 +249,75 @@ export class VideoPlayerDialog {
     this.el = null;
     this.videoEl = null;
     this.parsed = parseVideoUrl(videoObj.url);
-    this.currentTime = 0;
+    this.currentTime = this.parsed.startTime || 0;
+    this.duration = 0;
+    this.isPlaying = true;
+    this._ytInfoReceived = false;
+    this._ytListenTimer = null;
+    this._tickTimer = null;
+    this._editingIdx = -1;
+    this._seeking = false;
+  }
+
+  _sendYtCommand(func, args = []) {
+    if (!this.iframe?.contentWindow) return false;
+    try {
+      this.iframe.contentWindow.postMessage(JSON.stringify({
+        event: 'command',
+        func,
+        args
+      }), '*');
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  _sendYtListening() {
+    if (!this.iframe?.contentWindow) return;
+    try {
+      this.iframe.contentWindow.postMessage(JSON.stringify({
+        event: 'listening',
+        id: 1,
+        channel: 'widget'
+      }), '*');
+      this.iframe.contentWindow.postMessage(JSON.stringify({
+        event: 'command',
+        func: 'addEventListener',
+        args: ['onStateChange']
+      }), '*');
+    } catch (_) {}
+  }
+
+  _updateTransportUI() {
+    if (this.timeDisplay) {
+      const durText = this.duration > 0 ? ` / ${formatTime(this.duration)}` : '';
+      this.timeDisplay.textContent = formatTime(this.currentTime) + durText;
+    }
+    if (this.scrubberEl && !this._seeking) {
+      const maxDur = Math.max(this.duration || 0, Math.ceil(this.currentTime) + 10, 60);
+      this.scrubberEl.max = String(maxDur);
+      this.scrubberEl.value = String(Math.max(0, Math.min(maxDur, this.currentTime)));
+    }
+    if (this.btnPlayPause) {
+      this.btnPlayPause.textContent = this.isPlaying ? '⏸' : '▶';
+      this.btnPlayPause.title = this.isPlaying ? t('Pause') : t('Play');
+    }
   }
 
   open() {
     this.close();
     const parsed = this.parsed;
+    this.currentTime = parsed.startTime || 0;
+    this.duration = 0;
+    this.isPlaying = parsed.type !== 'unknown';
+    this._ytInfoReceived = false;
+    this._editingIdx = -1;
 
     const backdrop = h('div', {
       id: 'videoPlayerModal',
       class: 'modal-backdrop',
-      style: 'position:fixed;inset:0;z-index:9600;background:rgba(0,0,0,0.65);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;'
+      style: 'position:fixed;inset:0;z-index:9600;background:rgba(0,0,0,0.65);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;padding:12px;'
     });
     backdrop.addEventListener('click', (e) => {
       if (e.target === backdrop) this.close();
@@ -260,11 +325,11 @@ export class VideoPlayerDialog {
 
     const card = h('div', {
       class: 'video-player-card',
-      style: 'background:var(--surface,#1e2227);color:var(--text,#f0f6fc);border-radius:18px;box-shadow:0 16px 48px rgba(0,0,0,0.5);border:1px solid var(--line,rgba(255,255,255,0.12));width:92%;max-width:820px;max-height:92vh;overflow:hidden;display:flex;flex-direction:column;font-family:inherit;'
+      style: 'background:var(--surface,#1e2227);color:var(--text,#f0f6fc);border-radius:18px;box-shadow:0 16px 48px rgba(0,0,0,0.5);border:1px solid var(--line,rgba(255,255,255,0.12));width:92%;max-width:860px;max-height:92vh;overflow-y:auto;display:flex;flex-direction:column;font-family:inherit;'
     });
 
     // 1. Header Bar
-    const titleEl = h('b', { style: 'font-size:14.5px;max-width:600px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' },
+    const titleEl = h('b', { style: 'font-size:14.5px;max-width:640px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' },
       this.videoObj.title || t('Video Player')
     );
     const btnClose = h('button', {
@@ -272,13 +337,13 @@ export class VideoPlayerDialog {
       onclick: () => this.close()
     }, '✕');
     const headBar = h('div', {
-      style: 'display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid var(--line,rgba(255,255,255,0.08));background:rgba(0,0,0,0.15);'
+      style: 'display:flex;align-items:center;justify-content:space-between;padding:10px 18px;border-bottom:1px solid var(--line,rgba(255,255,255,0.08));background:rgba(0,0,0,0.15);flex-shrink:0;'
     }, titleEl, btnClose);
     card.appendChild(headBar);
 
     // 2. Video Player Frame Container
     const playerContainer = h('div', {
-      style: 'position:relative;width:100%;height:440px;background:#000000;display:flex;align-items:center;justify-content:center;'
+      style: 'position:relative;width:100%;height:420px;min-height:240px;background:#000000;display:flex;align-items:center;justify-content:center;flex-shrink:0;'
     });
 
     if (parsed.type === 'youtube') {
@@ -293,12 +358,39 @@ export class VideoPlayerDialog {
       playerContainer.appendChild(iframe);
       this.iframe = iframe;
 
+      iframe.addEventListener('load', () => {
+        this._sendYtListening();
+        let tries = 0;
+        clearInterval(this._ytListenTimer);
+        this._ytListenTimer = setInterval(() => {
+          if (this._ytInfoReceived || ++tries > 12) {
+            clearInterval(this._ytListenTimer);
+            this._ytListenTimer = null;
+            return;
+          }
+          this._sendYtListening();
+        }, 500);
+      });
+
       this._onWindowMessage = (e) => {
         try {
           const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
-          if (data && data.event === 'infoDelivery' && data.info?.currentTime != null) {
-            this.currentTime = data.info.currentTime;
-            if (timeDisplay) timeDisplay.textContent = formatTime(this.currentTime);
+          if (!data || typeof data !== 'object') return;
+          if (data.event === 'onReady') {
+            this._ytInfoReceived = true;
+            this._sendYtListening();
+          } else if (data.event === 'infoDelivery' && data.info) {
+            this._ytInfoReceived = true;
+            if (typeof data.info.currentTime === 'number' && Number.isFinite(data.info.currentTime)) {
+              this.currentTime = data.info.currentTime;
+            }
+            if (typeof data.info.duration === 'number' && Number.isFinite(data.info.duration) && data.info.duration > 0) {
+              this.duration = data.info.duration;
+            }
+            if (typeof data.info.playerState === 'number') {
+              this.isPlaying = data.info.playerState === 1;
+            }
+            this._updateTransportUI();
           }
         } catch (_) {}
       };
@@ -311,10 +403,17 @@ export class VideoPlayerDialog {
         crossOrigin: 'anonymous',
         style: 'width:100%;height:100%;object-fit:contain;'
       });
-      vid.addEventListener('timeupdate', () => {
-        this.currentTime = vid.currentTime;
-        if (timeDisplay) timeDisplay.textContent = formatTime(vid.currentTime);
+      vid.addEventListener('loadedmetadata', () => {
+        if (Number.isFinite(vid.duration)) this.duration = vid.duration;
+        this._updateTransportUI();
       });
+      vid.addEventListener('timeupdate', () => {
+        this.currentTime = vid.currentTime || 0;
+        if (Number.isFinite(vid.duration) && vid.duration > 0) this.duration = vid.duration;
+        this._updateTransportUI();
+      });
+      vid.addEventListener('play', () => { this.isPlaying = true; this._updateTransportUI(); });
+      vid.addEventListener('pause', () => { this.isPlaying = false; this._updateTransportUI(); });
       vid.addEventListener('error', () => {
         playerContainer.innerHTML = '';
         playerContainer.appendChild(h('div', {
@@ -334,61 +433,142 @@ export class VideoPlayerDialog {
     }
     card.appendChild(playerContainer);
 
-    // 3. Action Toolbar: Full-Res Screenshot & Timestamp Bookmarking
+    // 2.5 Transport & Skip Control Bar (works on YouTube, Shorts, and direct video)
+    const timeDisplay = h('span', {
+      style: 'font-size:12.5px;font-variant-numeric:tabular-nums;color:var(--accent,#00e5ff);font-weight:600;min-width:90px;'
+    }, formatTime(this.currentTime));
+    this.timeDisplay = timeDisplay;
+
+    const navBtnStyle = 'padding:4px 9px;border-radius:7px;border:1px solid var(--line,rgba(255,255,255,0.16));background:rgba(255,255,255,0.06);color:inherit;cursor:pointer;font-size:12px;font-weight:600;';
+    const btnBack10 = h('button', { type: 'button', style: navBtnStyle, title: t('Back 10 seconds'), onclick: () => this.seekRelative(-10) }, '−10s');
+    const btnBack5 = h('button', { type: 'button', style: navBtnStyle, title: t('Back 5 seconds'), onclick: () => this.seekRelative(-5) }, '−5s');
+    const btnPlayPause = h('button', { type: 'button', style: navBtnStyle + ';min-width:34px;', title: t('Play / Pause'), onclick: () => this.togglePlay() }, this.isPlaying ? '⏸' : '▶');
+    this.btnPlayPause = btnPlayPause;
+    const btnFwd5 = h('button', { type: 'button', style: navBtnStyle, title: t('Forward 5 seconds'), onclick: () => this.seekRelative(5) }, '+5s');
+    const btnFwd10 = h('button', { type: 'button', style: navBtnStyle, title: t('Forward 10 seconds'), onclick: () => this.seekRelative(10) }, '+10s');
+
+    const scrubberEl = h('input', {
+      type: 'range',
+      min: '0',
+      max: String(Math.max(60, Math.ceil(this.currentTime) + 10)),
+      value: String(this.currentTime),
+      step: '1',
+      style: 'flex:1;min-width:120px;accent-color:var(--accent,#00e5ff);cursor:pointer;',
+      'aria-label': t('Seek video')
+    });
+    scrubberEl.addEventListener('pointerdown', () => { this._seeking = true; });
+    scrubberEl.addEventListener('input', () => {
+      const v = Number(scrubberEl.value) || 0;
+      timeDisplay.textContent = formatTime(v) + (this.duration > 0 ? ` / ${formatTime(this.duration)}` : '');
+    });
+    scrubberEl.addEventListener('change', () => {
+      this._seeking = false;
+      this.seekTo(Number(scrubberEl.value) || 0);
+    });
+    this.scrubberEl = scrubberEl;
+
+    const transportBar = h('div', {
+      style: 'display:flex;align-items:center;gap:6px;padding:8px 18px;background:rgba(0,0,0,0.28);border-bottom:1px solid var(--line,rgba(255,255,255,0.08));flex-wrap:wrap;flex-shrink:0;'
+    }, btnBack10, btnBack5, btnPlayPause, btnFwd5, btnFwd10, scrubberEl, timeDisplay);
+    card.appendChild(transportBar);
+
+    // 3. Action Toolbar: Quick/Custom Bookmark, Screenshot, Markdown Link, Explicit Pin
     const actionToolbar = h('div', {
-      style: 'display:flex;align-items:center;justify-content:space-between;padding:10px 18px;background:rgba(0,0,0,0.2);border-bottom:1px solid var(--line,rgba(255,255,255,0.08));flex-wrap:wrap;gap:8px;'
+      style: 'display:flex;align-items:center;justify-content:space-between;padding:10px 18px;background:rgba(0,0,0,0.16);border-bottom:1px solid var(--line,rgba(255,255,255,0.08));flex-wrap:wrap;gap:8px;flex-shrink:0;'
     });
 
-    const timeDisplay = h('span', {
-      style: 'font-size:13px;font-variant-numeric:tabular-nums;color:var(--accent,#00e5ff);font-weight:600;min-width:55px;'
-    }, formatTime(this.currentTime));
+    const isQuick = () => this.app.settings?.videoQuickBookmark !== false;
 
-    // Full-Res Screenshot Button
     const btnScreenshot = h('button', {
       class: 'btn',
       title: t('Extract full-resolution native frame screenshot onto whiteboard'),
-      style: 'display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;border:1px solid var(--line,rgba(255,255,255,0.18));background:rgba(255,255,255,0.06);color:inherit;cursor:pointer;font-size:12.5px;font-weight:600;',
+      style: 'display:flex;align-items:center;gap:6px;padding:6px 11px;border-radius:8px;border:1px solid var(--line,rgba(255,255,255,0.18));background:rgba(255,255,255,0.06);color:inherit;cursor:pointer;font-size:12.5px;font-weight:600;',
       onclick: () => this.extractScreenshot()
     }, '📷 ' + t('Full-Res Screenshot'));
 
-    // Bookmark Timestamp Button
     const btnBookmark = h('button', {
       class: 'btn',
       title: t('Bookmark current video timestamp'),
-      style: 'display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;border:1px solid var(--line,rgba(255,255,255,0.18));background:rgba(255,255,255,0.06);color:inherit;cursor:pointer;font-size:12.5px;font-weight:600;',
+      style: 'display:flex;align-items:center;gap:6px;padding:6px 11px;border-radius:8px;border:1px solid var(--line,rgba(255,255,255,0.18));background:rgba(0,229,255,0.14);color:inherit;cursor:pointer;font-size:12.5px;font-weight:600;',
       onclick: () => this.addTimestampBookmark()
     }, '🔖 ' + t('Bookmark Timestamp'));
 
-    // Copy Markdown Timestamp Link
+    const quickChk = h('input', { type: 'checkbox', style: 'cursor:pointer;margin:0;' });
+    quickChk.checked = isQuick();
+    quickChk.addEventListener('change', () => {
+      this.app.settings.videoQuickBookmark = quickChk.checked;
+      this.app.saveSettings();
+      if (!quickChk.checked) customForm.style.display = 'flex';
+      else customForm.style.display = 'none';
+    });
+    const quickToggleLabel = h('label', {
+      style: 'display:inline-flex;align-items:center;gap:5px;font-size:12px;opacity:0.88;cursor:pointer;user-select:none;padding:4px 8px;border-radius:7px;border:1px solid var(--line,rgba(255,255,255,0.12));background:rgba(255,255,255,0.04);',
+      title: t('Quick mode captures the current time immediately; turn off to type a custom time and title first')
+    }, quickChk, h('span', {}, t('Quick 1-click')));
+
     const btnCopyMarkdown = h('button', {
       class: 'btn',
       title: t('Copy Markdown timestamp link to clipboard'),
-      style: 'display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;border:1px solid var(--line,rgba(255,255,255,0.18));background:rgba(255,255,255,0.06);color:inherit;cursor:pointer;font-size:12.5px;font-weight:600;',
+      style: 'display:flex;align-items:center;gap:6px;padding:6px 11px;border-radius:8px;border:1px solid var(--line,rgba(255,255,255,0.18));background:rgba(255,255,255,0.06);color:inherit;cursor:pointer;font-size:12.5px;font-weight:600;',
       onclick: () => this.copyMarkdownTimestamp()
     }, '📋 ' + t('Copy Markdown Link'));
 
-    // Stamp Bookmark Card on Board
     const btnStampCard = h('button', {
       class: 'btn',
       title: t('Place clickable timestamp card onto the board'),
-      style: 'display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;border:1px solid var(--line,rgba(255,255,255,0.18));background:rgba(255,255,255,0.06);color:inherit;cursor:pointer;font-size:12.5px;font-weight:600;',
+      style: 'display:flex;align-items:center;gap:6px;padding:6px 11px;border-radius:8px;border:1px solid var(--line,rgba(255,255,255,0.18));background:rgba(255,255,255,0.06);color:inherit;cursor:pointer;font-size:12.5px;font-weight:600;',
       onclick: () => this.stampBookmarkCard()
-    }, '📌 ' + t('Stamp Card on Board'));
+    }, '📌 ' + t('Pin card'));
 
-    actionToolbar.appendChild(h('div', { style: 'display:flex;align-items:center;gap:8px;' }, timeDisplay, btnBookmark, btnScreenshot));
-    actionToolbar.appendChild(h('div', { style: 'display:flex;align-items:center;gap:8px;' }, btnCopyMarkdown, btnStampCard));
+    actionToolbar.appendChild(h('div', { style: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;' }, btnBookmark, quickToggleLabel, btnScreenshot));
+    actionToolbar.appendChild(h('div', { style: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;' }, btnCopyMarkdown, btnStampCard));
     card.appendChild(actionToolbar);
 
-    // 4. Bookmarks & Timing Tags Drawer
-    const bookmarkSection = h('div', {
-      style: 'padding:12px 18px;max-height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;'
+    // Inline Custom Bookmark Row (no window.prompt)
+    const inputStyle = 'padding:5px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:rgba(0,0,0,0.3);color:inherit;font-size:12.5px;';
+    const customTimeInput = h('input', { type: 'text', placeholder: '00:00', style: inputStyle + ';width:78px;' });
+    const customLabelInput = h('input', { type: 'text', placeholder: t('Bookmark title…'), style: inputStyle + ';flex:1;min-width:150px;' });
+    const btnCustomSave = h('button', {
+      type: 'button',
+      class: 'btn primary',
+      style: 'padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;',
+      onclick: () => {
+        const sec = Math.max(0, parseTimeString(customTimeInput.value));
+        const label = customLabelInput.value.trim() || t('Moment at {time}', { time: formatTime(sec) });
+        this._saveBookmark(sec, label);
+        customLabelInput.value = '';
+        customTimeInput.value = formatTime(this.currentTime);
+      }
+    }, t('Add Bookmark'));
+    const customForm = h('div', {
+      style: `display:${isQuick() ? 'none' : 'flex'};align-items:center;gap:8px;padding:8px 18px;background:rgba(255,255,255,0.03);border-bottom:1px solid var(--line,rgba(255,255,255,0.08));flex-wrap:wrap;flex-shrink:0;`
+    },
+      h('span', { style: 'font-size:12px;opacity:0.75;' }, t('Time:')),
+      customTimeInput,
+      customLabelInput,
+      btnCustomSave
+    );
+    this.customFormEl = customForm;
+    this.customTimeInput = customTimeInput;
+    this.customLabelInput = customLabelInput;
+    customLabelInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); btnCustomSave.click(); }
     });
-    this.bookmarkListEl = h('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;' });
-    bookmarkSection.appendChild(h('span', { style: 'font-size:12px;font-weight:600;color:var(--text-2,rgba(255,255,255,0.6));' }, t('Timestamp Bookmarks (Click to seek):')));
+    card.appendChild(customForm);
+
+    // 4. Bookmarks & Timing Tags Drawer (scrollable & auto-sorted)
+    const bookmarkSection = h('div', {
+      style: 'padding:12px 18px;display:flex;flex-direction:column;gap:8px;flex-shrink:0;'
+    });
+    this.bookmarkListEl = h('div', {
+      style: 'display:flex;flex-direction:column;gap:6px;max-height:190px;overflow-y:auto;padding-right:4px;'
+    });
+    bookmarkSection.appendChild(h('span', { style: 'font-size:12px;font-weight:600;color:var(--text-2,rgba(255,255,255,0.6));' }, t('Timestamp Bookmarks (Click to seek · Chronological):')));
     bookmarkSection.appendChild(this.bookmarkListEl);
     card.appendChild(bookmarkSection);
 
     this.renderBookmarks();
+    this._updateTransportUI();
 
     backdrop.appendChild(card);
     document.body.appendChild(backdrop);
@@ -404,6 +584,14 @@ export class VideoPlayerDialog {
     if (this._onKeyDown) {
       window.removeEventListener('keydown', this._onKeyDown);
       this._onKeyDown = null;
+    }
+    if (this._ytListenTimer) {
+      clearInterval(this._ytListenTimer);
+      this._ytListenTimer = null;
+    }
+    if (this._tickTimer) {
+      clearInterval(this._tickTimer);
+      this._tickTimer = null;
     }
     if (this._onWindowMessage) {
       window.removeEventListener('message', this._onWindowMessage);
@@ -433,7 +621,7 @@ export class VideoPlayerDialog {
   renderBookmarks() {
     if (!this.bookmarkListEl) return;
     this.bookmarkListEl.innerHTML = '';
-    const bookmarks = Array.isArray(this.videoObj.bookmarks) ? this.videoObj.bookmarks : [];
+    const bookmarks = sortBookmarks(Array.isArray(this.videoObj.bookmarks) ? this.videoObj.bookmarks : []);
     if (!bookmarks.length) {
       this.bookmarkListEl.appendChild(h('small', { style: 'color:var(--text-2,rgba(255,255,255,0.45));font-style:italic;' }, t('No bookmarks added yet. Press "Bookmark Timestamp" while playing.')));
       return;
@@ -442,78 +630,149 @@ export class VideoPlayerDialog {
     for (let i = 0; i < bookmarks.length; i++) {
       const bm = bookmarks[i];
       const pill = h('div', {
-        style: 'display:flex;align-items:center;gap:6px;background:rgba(255,255,255,0.09);border:1px solid rgba(255,255,255,0.14);border-radius:20px;padding:3px 10px;font-size:12px;cursor:pointer;transition:background 0.15s ease;'
+        style: 'display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.13);border-radius:10px;padding:6px 10px;font-size:12.5px;'
       });
-      const tag = h('span', {
-        style: 'font-weight:700;color:var(--accent,#00e5ff);',
+      const tag = h('button', {
+        type: 'button',
+        style: 'background:rgba(0,229,255,0.14);border:1px solid rgba(0,229,255,0.3);border-radius:6px;padding:2px 7px;font-weight:700;color:var(--accent,#00e5ff);cursor:pointer;font-size:12px;font-variant-numeric:tabular-nums;flex-shrink:0;',
+        title: t('Seek to {time}', { time: formatTime(bm.time) }),
         onclick: () => this.seekTo(bm.time)
-      }, `[${formatTime(bm.time)}]`);
-      const label = h('span', {
-        onclick: () => this.seekTo(bm.time)
-      }, bm.label || t('Bookmark'));
-      const btnDel = h('button', {
-        style: 'background:none;border:none;color:rgba(255,255,255,0.5);font-size:12px;cursor:pointer;padding:0 2px;',
-        title: t('Delete bookmark'),
-        onclick: (e) => {
-          e.stopPropagation();
-          this.removeBookmark(i);
-        }
-      }, '✕');
+      }, formatTime(bm.time));
 
-      pill.appendChild(tag);
-      pill.appendChild(label);
-      pill.appendChild(btnDel);
+      if (this._editingIdx === i) {
+        const titleInput = h('input', {
+          type: 'text',
+          value: bm.label || '',
+          style: 'flex:1;min-width:120px;padding:3px 7px;border-radius:6px;border:1px solid rgba(0,229,255,0.5);background:rgba(0,0,0,0.35);color:inherit;font-size:12.5px;'
+        });
+        const commitRename = () => {
+          const val = titleInput.value.trim();
+          if (val) {
+            this.videoObj.bookmarks[i].label = val;
+            this.app.store.update(this.videoObj.id, { bookmarks: this.videoObj.bookmarks.map((x) => ({ ...x })) }, 'rename bookmark');
+            this.app.surface?.invalidate?.();
+          }
+          this._editingIdx = -1;
+          this.renderBookmarks();
+        };
+        titleInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+          else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this._editingIdx = -1; this.renderBookmarks(); }
+        });
+        const btnSave = h('button', {
+          type: 'button',
+          style: 'background:rgba(0,229,255,0.2);border:1px solid rgba(0,229,255,0.4);color:inherit;border-radius:6px;padding:2px 8px;cursor:pointer;font-size:12px;',
+          onclick: commitRename
+        }, '✓');
+        pill.appendChild(tag);
+        pill.appendChild(titleInput);
+        pill.appendChild(btnSave);
+        setTimeout(() => { titleInput.focus(); titleInput.select(); }, 20);
+      } else {
+        const label = h('span', {
+          style: 'flex:1;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
+          title: t('Click to seek · double-click to edit'),
+          onclick: () => this.seekTo(bm.time),
+          ondblclick: () => { this._editingIdx = i; this.renderBookmarks(); }
+        }, bm.label || t('Moment at {time}', { time: formatTime(bm.time) }));
+        const btnEdit = h('button', {
+          type: 'button',
+          style: 'background:none;border:none;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;padding:2px 4px;',
+          title: t('Edit bookmark title'),
+          onclick: (e) => { e.stopPropagation(); this._editingIdx = i; this.renderBookmarks(); }
+        }, '✎');
+        const btnPin = h('button', {
+          type: 'button',
+          style: 'background:none;border:none;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer;padding:2px 4px;',
+          title: t('Pin timestamp card on board'),
+          onclick: (e) => { e.stopPropagation(); this.stampBookmarkCard(bm.time, bm.label); }
+        }, '📌');
+        const btnDel = h('button', {
+          type: 'button',
+          style: 'background:none;border:none;color:rgba(255,255,255,0.5);font-size:12px;cursor:pointer;padding:2px 4px;',
+          title: t('Delete bookmark'),
+          onclick: (e) => {
+            e.stopPropagation();
+            this.removeBookmark(i);
+          }
+        }, '✕');
+
+        pill.appendChild(tag);
+        pill.appendChild(label);
+        pill.appendChild(btnEdit);
+        pill.appendChild(btnPin);
+        pill.appendChild(btnDel);
+      }
       this.bookmarkListEl.appendChild(pill);
     }
   }
 
-  seekTo(seconds) {
+  togglePlay() {
     if (this.videoEl) {
-      this.videoEl.currentTime = seconds;
+      if (this.videoEl.paused) { this.videoEl.play?.(); this.isPlaying = true; }
+      else { this.videoEl.pause?.(); this.isPlaying = false; }
+      this._updateTransportUI();
+      return;
+    }
+    if (this.iframe) {
+      const nextPlay = !this.isPlaying;
+      this._sendYtCommand(nextPlay ? 'playVideo' : 'pauseVideo', []);
+      this.isPlaying = nextPlay;
+      this._updateTransportUI();
+    }
+  }
+
+  seekRelative(delta) {
+    const base = Number.isFinite(this.currentTime) ? this.currentTime : 0;
+    const maxCap = this.duration > 0 ? this.duration : base + Math.max(0, delta);
+    const target = Math.max(0, Math.min(maxCap, Math.floor(base + delta)));
+    this.seekTo(target);
+  }
+
+  seekTo(seconds) {
+    const target = Math.max(0, Number(seconds) || 0);
+    if (this.videoEl) {
+      this.videoEl.currentTime = target;
       this.videoEl.play?.();
     } else if (this.iframe && this.parsed.id) {
-      let posted = false;
-      try {
-        if (this.iframe.contentWindow) {
-          this.iframe.contentWindow.postMessage(JSON.stringify({
-            event: 'command',
-            func: 'seekTo',
-            args: [seconds, true]
-          }), '*');
-          posted = true;
-        }
-      } catch (_) {}
-      if (!posted) {
-        this.iframe.src = `https://www.youtube-nocookie.com/embed/${this.parsed.id}?enablejsapi=1&autoplay=1&start=${Math.floor(seconds)}`;
+      const posted = this._sendYtCommand('seekTo', [target, true]);
+      if (posted) {
+        this._sendYtCommand('playVideo', []);
+      } else {
+        this.iframe.src = `https://www.youtube-nocookie.com/embed/${this.parsed.id}?enablejsapi=1&autoplay=1&playsinline=1&rel=0&start=${Math.floor(target)}`;
       }
     }
-    this.currentTime = seconds;
+    this.currentTime = target;
+    this._updateTransportUI();
+  }
+
+  _saveBookmark(tSec, label) {
+    if (!Array.isArray(this.videoObj.bookmarks)) this.videoObj.bookmarks = [];
+    const sec = Math.max(0, Math.floor(Number(tSec) || 0));
+    this.videoObj.bookmarks.push({ time: sec, label: String(label || '').trim() || t('Moment at {time}', { time: formatTime(sec) }) });
+    sortBookmarks(this.videoObj.bookmarks);
+
+    this.app.store.update(this.videoObj.id, { bookmarks: this.videoObj.bookmarks.map((x) => ({ ...x })) }, 'add bookmark');
+    this.renderBookmarks();
+    this.app.toast(t('Bookmark added: [{time}]', { time: formatTime(sec) }));
+    this.app.surface?.invalidate?.();
   }
 
   addTimestampBookmark() {
-    let tSec = Math.floor(this.currentTime);
-    if (this.parsed.type === 'youtube' && tSec === 0) {
-      const ask = prompt(t('Enter timestamp in seconds or mm:ss:'), '01:00');
-      if (ask) tSec = parseTimeString(ask);
+    const tSec = Math.max(0, Math.floor(this.currentTime || 0));
+    if (this.app.settings?.videoQuickBookmark === false) {
+      if (this.customFormEl) this.customFormEl.style.display = 'flex';
+      if (this.customTimeInput) this.customTimeInput.value = formatTime(tSec);
+      this.customLabelInput?.focus();
+      return;
     }
-    const label = prompt(t('Bookmark label:'), t('Moment at {time}', { time: formatTime(tSec) }));
-    if (label == null) return;
-
-    if (!Array.isArray(this.videoObj.bookmarks)) this.videoObj.bookmarks = [];
-    this.videoObj.bookmarks.push({ time: tSec, label: label.trim() });
-    this.videoObj.bookmarks.sort((a, b) => a.time - b.time);
-
-    // Save to store
-    this.app.store.update(this.videoObj.id, { bookmarks: [...this.videoObj.bookmarks] }, 'add bookmark');
-    this.renderBookmarks();
-    this.app.toast(t('Bookmark added: [{time}]', { time: formatTime(tSec) }));
-    this.app.surface?.invalidate?.();
+    this._saveBookmark(tSec, t('Moment at {time}', { time: formatTime(tSec) }));
   }
 
   removeBookmark(idx) {
     if (!Array.isArray(this.videoObj.bookmarks)) return;
     this.videoObj.bookmarks.splice(idx, 1);
-    this.app.store.update(this.videoObj.id, { bookmarks: [...this.videoObj.bookmarks] }, 'remove bookmark');
+    this.app.store.update(this.videoObj.id, { bookmarks: this.videoObj.bookmarks.map((x) => ({ ...x })) }, 'remove bookmark');
     this.renderBookmarks();
     this.app.surface?.invalidate?.();
   }
@@ -531,13 +790,14 @@ export class VideoPlayerDialog {
     this.app.toast(t('Markdown link copied: {link}', { link: mdLink }));
   }
 
-  stampBookmarkCard() {
-    const tSec = Math.floor(this.currentTime);
+  stampBookmarkCard(customTime = null, customLabel = null) {
+    const tSec = Math.max(0, Math.floor(customTime != null ? customTime : (this.currentTime || 0)));
     const timeStr = formatTime(tSec);
     const b = boundsOf(this.videoObj) || this.videoObj;
     const bmCount = (this.videoObj.bookmarks || []).length;
     const cardX = b.x + b.w + 24;
     const cardY = b.y + bmCount * 46;
+    const heading = customLabel ? `${customLabel} (${this.videoObj.title || t('Video')})` : (this.videoObj.title || t('Video'));
 
     const noteObj = {
       id: 'n_' + Math.random().toString(36).slice(2, 10),
@@ -547,7 +807,7 @@ export class VideoPlayerDialog {
       w: 220,
       h: 80,
       color: '#fff3b0',
-      text: `📌 **[${timeStr}]** ${this.videoObj.title || 'Video'}\n[Jump to time](video://${this.videoObj.id}?t=${tSec})`
+      text: `📌 **[${timeStr}]** ${heading}\n[Jump to time](video://${this.videoObj.id}?t=${tSec})`
     };
 
     this.app.store.add(noteObj, 'stamp bookmark card');

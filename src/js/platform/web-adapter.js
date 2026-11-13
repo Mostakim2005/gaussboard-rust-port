@@ -6,6 +6,7 @@ import * as files from './web-files.js';
 import { generatePdfFromHtml } from './web-pdf.js';
 import * as updater from './update-manager.js';
 import { t } from '../i18n.js';
+import { boardAssetUrl } from '../core/util.js';
 import { browserClipboardWrite } from './web-clipboard.js';
 
 const APP_VERSION = '__APP_VERSION__';
@@ -15,6 +16,41 @@ const _menuListeners = new Set();
 const _openFileListeners = new Set();
 const STORE_ASSETS = 'assets';
 const _memRawAssets = new Map();
+const _vaultHandles = new Map();
+
+async function walkDirectoryMd(dirHandle, prefix = '', out = []) {
+  for await (const [name, entry] of dirHandle.entries()) {
+    if (!name || name.startsWith('.')) continue;
+    const relPath = prefix ? `${prefix}/${name}` : name;
+    if (entry.kind === 'directory') {
+      await walkDirectoryMd(entry, relPath, out);
+    } else if (entry.kind === 'file' && /\.md$/i.test(name)) {
+      let modifiedMs = 0, size = 0;
+      try {
+        const f = await entry.getFile();
+        modifiedMs = f.lastModified || 0;
+        size = f.size || 0;
+      } catch {}
+      out.push({ relPath, name: name.replace(/\.md$/i, ''), modifiedMs, size });
+    }
+    if (out.length >= 4000) break;
+  }
+  return out;
+}
+
+async function resolveVaultHandleFile(vaultRoot, relPath, create = false) {
+  const dir = _vaultHandles.get(vaultRoot);
+  if (!dir) throw new Error('Select the Obsidian vault folder in this browser session first');
+  const parts = String(relPath || '').replace(/\\/g, '/').replace(/^\/+/, '').split('/').filter(Boolean);
+  if (!parts.length || parts.some((p) => p === '..' || p === '.' || p.startsWith('.'))) {
+    throw new Error('Invalid vault note path');
+  }
+  let cur = dir;
+  for (let i = 0; i < parts.length - 1; i++) {
+    cur = await cur.getDirectoryHandle(parts[i], { create });
+  }
+  return cur.getFileHandle(parts[parts.length - 1], { create });
+}
 
 function toUint8(input) {
   if (!input) return new Uint8Array(0);
@@ -130,7 +166,7 @@ async function webIngestPdfBytes(uint8Array) {
     ok: true,
     assetId,
     byteLength: u8.byteLength,
-    uri: `app://board/__asset/${assetId}`
+    uri: boardAssetUrl(assetId, '__asset')
   };
 }
 
@@ -266,6 +302,42 @@ export function createWebAdapter() {
     },
 
     exportPdf: (payload) => generatePdfFromHtml(payload),
+
+    vault: {
+      chooseFolder: async () => {
+        if (typeof window.showDirectoryPicker !== 'function') {
+          return { ok: false, canceled: true, unsupported: true };
+        }
+        try {
+          const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+          const key = `fsa://${handle.name}`;
+          _vaultHandles.set(key, handle);
+          return { ok: true, canceled: false, path: key, name: handle.name };
+        } catch (err) {
+          if (err?.name === 'AbortError') return { ok: false, canceled: true };
+          return { ok: false, error: err?.message || String(err) };
+        }
+      },
+      listNotes: async (vaultRoot) => {
+        const dir = _vaultHandles.get(vaultRoot);
+        if (!dir) return [];
+        const list = await walkDirectoryMd(dir);
+        list.sort((a, b) => (b.modifiedMs || 0) - (a.modifiedMs || 0));
+        return list;
+      },
+      readNote: async (vaultRoot, relPath) => {
+        const fh = await resolveVaultHandleFile(vaultRoot, relPath, false);
+        const file = await fh.getFile();
+        return { ok: true, relPath, content: await file.text(), modifiedMs: file.lastModified || 0 };
+      },
+      writeNote: async (vaultRoot, relPath, content) => {
+        const fh = await resolveVaultHandleFile(vaultRoot, relPath, true);
+        const w = await fh.createWritable();
+        await w.write(String(content ?? ''));
+        await w.close();
+        return { ok: true, relPath, modifiedMs: Date.now() };
+      }
+    },
 
     onMenu: (cb) => { _menuListeners.add(cb); },
     onOpenFile: (cb) => { _openFileListeners.add(cb); },

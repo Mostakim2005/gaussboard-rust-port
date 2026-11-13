@@ -518,3 +518,41 @@ flowchart LR
   * `src-tauri/src/assets.rs` -> `pdf_ingest_path`, `pdf_ingest_bytes`, `assets_read_raw`
   * `src/js/platform/tauri-board.js` -> `importToPdf`, `exportPdf`, `pdf`
 
+### [DECISION: Obsidian-Cursor-Line-Live-Preview-And-Vault-Bridge] | Aliases: Live Preview, Obsidian vault bridge, source mode, reading view, bundler-free
+> **1-Line Summary:** Built a pure-ES6 cursor-line block splitter (`splitMarkdownBlocksWithLines`) inside `TextEditor` plus sandboxed local Obsidian Vault `.md` IPC (`vault.rs`) instead of bundling CodeMirror 6 or modifying saved `.md` files automatically on every keystroke.
+* **Decision Maker:** `[DECIDED BY: HUMAN + AGENT]`
+* **Rationale:** Keeps GaussBoard Rust 100% free of frontend bundlers while giving Obsidian Live Preview as the default (`markdownEditMode: 'live'`) with 1-click switching to `Source` or `Read`, and isolates `.md` vault access behind canonical root path checks and explicit `Sync ↓` / `Push ↑` triggers.
+* **Code Anchors (Grep Targets):**
+  * `src/js/core/markdown.js` -> `splitMarkdownBlocksWithLines`
+  * `src/js/ui/textedit.js` -> `TextEditor.setMarkdownMode`, `TextEditor.renderLiveHybridDom`, `TextEditor.runToolbarAction`
+  * `src-tauri/src/vault.rs` -> `canonical_vault_root`, `resolve_safe_md_path`
+
+### [DECISION: Freeform-Unclipped-Canvas-Over-Forced-Page-Clip] | Aliases: pageClip, infinite canvas with pages, unclipped PDF pages, strict sheet mode
+> **1-Line Summary:** Changed default page mode to `doc.pageClip = false` (freeform unclipped infinite canvas with reference page frames) with an opt-in `Clip & confine content inside pages` toggle in Canvas Settings.
+* **Decision Maker:** `[DECIDED BY: HUMAN + AGENT]`
+* **Rationale:** Users annotate across PDF page margins and place notes beside sheets; unconditional canvas clipping hid strokes drawn slightly outside page rectangles.
+* **Code Anchors (Grep Targets):**
+  * `src/js/core/store.js` -> `Store.setPageClip`, `Store.load`
+  * `src/js/core/surface.js`, `src/js/core/tools.js` -> `doc.pageClip`
+  * `src/js/ui/panels.js` -> `settings`
+
+### [TRAP: WebView2-Custom-Scheme-Insecure-Origin-Blocks-GetUserMedia] | Aliases: microphone error, navigator.mediaDevices, useHttpsScheme, app.localhost, RECORD_AUDIO
+> **1-Line Summary:** Enabling `"useHttpsScheme": true` serves `app://` over `https://app.localhost` so `navigator.mediaDevices.getUserMedia` stays in a Secure Context on Windows WebView2 and Android, requiring origin-relative URLs via `boardAssetUrl()` and native `PermissionRequested` / `RECORD_AUDIO` wiring.
+```mermaid
+flowchart LR
+    Bad["app://board (Not Secure Context)"] -->|"mediaDevices undefined"| Fail["Mic blocked"]
+    Good["useHttpsScheme: true -> https://app.localhost"] -->|"boardAssetUrl() + WebView2 PermissionRequested + RECORD_AUDIO"| Ok["Mic & Asset Streams Work"]
+```
+* **Code Anchors (Grep Targets):**
+  * `src-tauri/tauri.conf.json` -> `useHttpsScheme`, `csp`
+  * `src-tauri/src/lib.rs` -> `configure_webview2_permissions`
+  * `.github/workflows/tauri-android.yml` -> `RECORD_AUDIO`
+  * `src/js/core/util.js`, `src/js/core/audio-recorder.js` -> `boardAssetUrl`, `AudioRecorder`
+
+### [TRAP: Windows-Clipboard-Image-Race-And-Missing-Image-Capabilities] | Aliases: clipboard_read, clipboard_write, allow-read-image, ownWriteAt, excerpt paste
+> **1-Line Summary:** Tauri clipboard image sync requires both ACL image capabilities (`allow-read-image`, `allow-write-image`), PNG↔RGBA conversion in `clipboard.rs`, and a 350ms `ownWriteAt` guard in `tauri-board.js` so `board://clipboard-seq` events from our own write do not wipe excerpt metadata.
+* **Code Anchors (Grep Targets):**
+  * `src-tauri/capabilities/default.json` -> `clipboard-manager:allow-read-image`, `clipboard-manager:allow-write-image`
+  * `src-tauri/src/clipboard.rs` -> `decode_png_data_url_to_rgba`, `encode_rgba_to_png_data_url`, `clipboard_read`, `clipboard_write`
+  * `src/js/platform/tauri-board.js`, `src/js/app.js` -> `ownWriteAt`, `_storeExcerptOnClipboard`, `_matchExcerptMeta`
+

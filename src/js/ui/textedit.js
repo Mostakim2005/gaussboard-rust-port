@@ -11,7 +11,7 @@ import { fitFontSize, readableText, wrapText, clamp } from '../core/util.js';
 import { faceOf, noteTypeRange, inkPaint } from '../core/render.js';
 import { objectRuns, normalizeRuns, layoutRich, fitRichSize, htmlToRuns, needsRich } from '../core/richtext.js';
 import { refSpans, refToken, refLabel, refMissing, wikilinksToRefs, handleWikilinkDoubleClick } from '../core/boardrefs.js';
-import { isMarkdown, renderMarkdownToHtml, toggleTaskAtLine, parseFrontmatter } from '../core/markdown.js';
+import { isMarkdown, renderMarkdownToHtml, toggleTaskAtLine, parseFrontmatter, splitMarkdownBlocksWithLines, extractFootnotes, stripObsidianComments } from '../core/markdown.js';
 import { openBoardPicker } from './boardpicker.js';
 import { updateSelectionBar } from './contextmenu.js';
 import { t } from '../i18n.js';
@@ -213,6 +213,13 @@ export class TextEditor {
     this.el = null;
     this.previewEl = null;
     this.previewMode = false;
+    this.mdMode = 'source';
+    this._lastEditMode = 'live';
+    this.activeBlockIdx = 0;
+    this.activeBlockTa = null;
+    this._liveBlocks = [];
+    this._internalFocusSwap = false;
+    this._syncingFromBlock = false;
     this.target = null;
     this.cell = null;
     this.measure = document.createElement('canvas').getContext('2d');
@@ -350,10 +357,29 @@ export class TextEditor {
       else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); this.commit(); }
       else if (e.key === 'Tab' && cell) { e.preventDefault(); this.commit(); }
     });
-    ta.addEventListener('blur', () => { if (!this._picking && !this.previewMode) this.commit(); });
-    this._onSel = () => { if (this.el && document.activeElement === this.el) updateSelectionBar(app, true); };
+    ta.addEventListener('blur', () => { if (!this._picking && !this.previewMode && !this._internalFocusSwap) this.commit(); });
+    this._onSel = () => {
+      if (this.el && (document.activeElement === this.el || (this.activeBlockTa && document.activeElement === this.activeBlockTa))) {
+        updateSelectionBar(app, true);
+      }
+    };
     document.addEventListener('selectionchange', this._onSel);
     ta.addEventListener('pointerdown', (e) => e.stopPropagation());
+    this.mdMode = 'source';
+    this.previewMode = false;
+    this.activeBlockIdx = 0;
+    this.activeBlockTa = null;
+    this._liveBlocks = [];
+    if (this.isMarkdownEligible()) {
+      const pref = this.getPreferredMarkdownMode();
+      if (pref === 'live' || pref === 'reading') {
+        queueMicrotask(() => {
+          if (this.el === ta && this.target === obj) {
+            this.setMarkdownMode(pref, { initial: true });
+          }
+        });
+      }
+    }
 
     setTimeout(() => {
       ta.focus();
@@ -368,6 +394,22 @@ export class TextEditor {
    */
   wrapMarkdownSelection(prefix, suffix = prefix) {
     if (!this.el) return;
+    if (this.mdMode === 'live' && this.activeBlockTa && this.activeBlockTa.isConnected) {
+      const bta = this.activeBlockTa;
+      const start = bta.selectionStart ?? 0;
+      const end = bta.selectionEnd ?? start;
+      const val = bta.value;
+      const selected = val.slice(start, end);
+      bta.value = val.slice(0, start) + prefix + selected + suffix + val.slice(end);
+      const caretStart = start + prefix.length;
+      const caretEnd = selected ? end + prefix.length : caretStart;
+      this._internalFocusSwap = true;
+      bta.focus({ preventScroll: true });
+      bta.setSelectionRange(caretStart, caretEnd);
+      this._internalFocusSwap = false;
+      this._applyActiveBlockEdit(bta.value, caretStart, caretEnd);
+      return;
+    }
     const start = this.el.selectionStart;
     const end = this.el.selectionEnd;
     const val = this.el.value;
@@ -381,60 +423,442 @@ export class TextEditor {
     this.app.surface.invalidate();
   }
 
-  /**
-   * Toggle between raw Markdown source editing and rendered Obsidian Live Preview.
-   */
-  toggleLivePreview() {
-    if (!this.el || !this.target) return;
-    this.previewMode = !this.previewMode;
-    if (this.previewMode) {
-      if (!this.previewEl) {
-        const pv = document.createElement('div');
-        pv.className = 'rt gb-markdown-body gb-live-preview';
-        pv.addEventListener('pointerdown', (e) => {
-          e.stopPropagation();
-          const cb = e.target.closest('input.gb-task-checkbox');
-          if (cb) {
-            e.preventDefault();
-            const lineIdx = Number(cb.getAttribute('data-line'));
-            const toggled = toggleTaskAtLine(this.el.value, lineIdx);
-            if (toggled.toggled) {
-              this.el.value = toggled.text;
-              this.renderPreviewDom();
-            }
-            return;
-          }
-          const wl = e.target.closest('a.gb-wikilink, a.gb-obsidian-uri, a.gb-ext-link');
-          if (wl) {
-            e.preventDefault();
-            const href = wl.getAttribute('data-ref') || wl.getAttribute('href');
-            if (href) {
-              const bmatch = /^b:([^#]+)(?:#(.+))?/.exec(href);
-              const targetBoardId = bmatch ? bmatch[1] : href;
-              const refObj = { id: targetBoardId, name: wl.textContent || targetBoardId };
-              handleWikilinkDoubleClick(this.app, refObj, { x: e.clientX, y: e.clientY }, this.target);
-            }
-            return;
-          }
-          this.toggleLivePreview();
-        });
-        this.previewEl = pv;
-        this.layer.appendChild(pv);
-      }
-      this.renderPreviewDom();
-      this.el.style.display = 'none';
-      this.previewEl.style.display = '';
-    } else {
-      if (this.previewEl) this.previewEl.style.display = 'none';
-      this.el.style.display = '';
-      this.el.focus();
+  /** Whether the current edit target supports Markdown Live Preview & modes. */
+  isMarkdownEligible() {
+    const o = this.target;
+    if (!o || this.cell) return false;
+    if (o.obsidianPath) return true;
+    const s = this.app?.settings || {};
+    if (o.type === 'note') {
+      if (o.markdown === true) return true;
+      return o.markdown !== false && s.noteMarkdown !== false && (!needsRich(o) || isMarkdown(this.el?.value || o.text || ''));
     }
+    if (o.type === 'text') {
+      if (o.markdown === true) return true;
+      return o.markdown !== false && s.textMarkdown !== false && (!needsRich(o) || isMarkdown(this.el?.value || o.text || ''));
+    }
+    return false;
+  }
+
+  getPreferredMarkdownMode() {
+    const m = this.app?.settings?.markdownEditMode;
+    return (m === 'source' || m === 'reading' || m === 'live') ? m : 'live';
+  }
+
+  get activeInput() {
+    if (this.mdMode === 'live' && this.activeBlockTa && this.activeBlockTa.isConnected) {
+      return this.activeBlockTa;
+    }
+    return this.el;
+  }
+
+  setValue(nextText) {
+    if (!this.el) return;
+    this.el.value = String(nextText ?? '');
+    this._syncingFromBlock = true;
+    this.el.dispatchEvent(new Event('input'));
+    this._syncingFromBlock = false;
+    if (this.mdMode === 'reading') this.renderPreviewDom();
+    else if (this.mdMode === 'live') this.renderLiveHybridDom();
+    this.place();
+    this.app?.surface?.invalidate?.();
+  }
+
+  _ensurePreviewEl() {
+    if (this.previewEl) return this.previewEl;
+    const pv = document.createElement('div');
+    pv.className = 'rt gb-markdown-body gb-live-preview';
+    pv.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      const cb = e.target.closest('input.gb-task-checkbox');
+      if (cb) {
+        e.preventDefault();
+        const blockEl = e.target.closest('.gb-live-block');
+        const baseLine = blockEl ? Number(blockEl.dataset.lineStart || 0) : 0;
+        const relLine = Number(cb.getAttribute('data-line') || 0);
+        const lineIdx = this.mdMode === 'live' ? (baseLine + relLine) : relLine;
+        const toggled = toggleTaskAtLine(this.el.value, lineIdx);
+        if (toggled.toggled) {
+          this.el.value = toggled.text;
+          this._syncingFromBlock = true;
+          this.el.dispatchEvent(new Event('input'));
+          this._syncingFromBlock = false;
+          if (this.mdMode === 'live') this.renderLiveHybridDom();
+          else this.renderPreviewDom();
+          this.app?.surface?.invalidate?.();
+        }
+        return;
+      }
+      const wl = e.target.closest('a.gb-wikilink, a.gb-obsidian-uri, a.gb-ext-link');
+      if (wl) {
+        e.preventDefault();
+        const href = wl.getAttribute('data-ref') || wl.getAttribute('href');
+        if (href) {
+          const bmatch = /^b:([^#]+)(?:#(.+))?/.exec(href);
+          const targetBoardId = bmatch ? bmatch[1] : href;
+          const refObj = { id: targetBoardId, name: wl.textContent || targetBoardId };
+          handleWikilinkDoubleClick(this.app, refObj, { x: e.clientX, y: e.clientY }, this.target);
+        }
+        return;
+      }
+      if (this.mdMode === 'live') {
+        const blockEl = e.target.closest('.gb-live-block');
+        if (blockEl) {
+          const idx = Number(blockEl.dataset.blockIdx);
+          if (Number.isInteger(idx) && idx !== this.activeBlockIdx) {
+            e.preventDefault();
+            this._activateLiveBlock(idx, { atEnd: true });
+          }
+          return;
+        }
+        if (e.target === pv && this._liveBlocks.length) {
+          e.preventDefault();
+          this._activateLiveBlock(this._liveBlocks.length - 1, { atEnd: true });
+        }
+        return;
+      }
+      this.setMarkdownMode(this._lastEditMode || 'live');
+    });
+    pv.addEventListener('focusout', () => {
+      if (this.mdMode !== 'live') return;
+      setTimeout(() => {
+        if (!this.el || !this.target || this.mdMode !== 'live') return;
+        if (this._picking || this._internalFocusSwap) return;
+        const ae = document.activeElement;
+        if (ae === this.el || pv.contains(ae)) return;
+        if (ae?.closest?.('#ctxbar, #selectionBar, .popover, .modal, .dialog')) return;
+        this.commit();
+      }, 0);
+    });
+    this.previewEl = pv;
+    this.layer.appendChild(pv);
+    return pv;
+  }
+
+  /**
+   * Switch Markdown editing mode between 'live' (cursor-line Live Preview),
+   * 'source' (raw Markdown), and 'reading' (rendered preview).
+   */
+  setMarkdownMode(mode, opts = {}) {
+    if (!this.el || !this.target) return;
+    if (!this.isMarkdownEligible()) mode = 'source';
+    if (mode !== 'live' && mode !== 'source' && mode !== 'reading') mode = 'live';
+
+    const prevMode = this.mdMode;
+    if (prevMode === 'live' || prevMode === 'source') {
+      this._lastEditMode = prevMode;
+    }
+
+    // Preserve global cursor offset across Live <-> Source switches.
+    let globalStart = this.el.selectionStart ?? 0;
+    let globalEnd = this.el.selectionEnd ?? globalStart;
+    if (prevMode === 'live' && this.activeBlockTa && this.activeBlockTa.isConnected) {
+      const curBlk = this._liveBlocks[this.activeBlockIdx];
+      if (curBlk) {
+        globalStart = curBlk.startOffset + (this.activeBlockTa.selectionStart ?? 0);
+        globalEnd = curBlk.startOffset + (this.activeBlockTa.selectionEnd ?? 0);
+      }
+    }
+
+    this._internalFocusSwap = true;
+    this.mdMode = mode;
+
+    if (mode === 'source') {
+      this.previewMode = false;
+      this.activeBlockTa = null;
+      if (this.previewEl) {
+        this.previewEl.style.display = 'none';
+        this.previewEl.classList.remove('gb-is-live-mode');
+      }
+      this.el.style.display = '';
+      this.el.focus({ preventScroll: true });
+      try { this.el.setSelectionRange(globalStart, globalEnd); } catch { /* ignore */ }
+      this._internalFocusSwap = false;
+      this.place();
+      updateSelectionBar(this.app, true);
+      return;
+    }
+
+    this.previewMode = true;
+    const pv = this._ensurePreviewEl();
+    this.el.style.display = 'none';
+    pv.style.display = '';
+
+    if (mode === 'live') {
+      const blocks = splitMarkdownBlocksWithLines(this.el.value);
+      this._liveBlocks = blocks;
+      let idx = 0;
+      if (opts.initial) {
+        idx = Math.max(0, blocks.findIndex((b) => globalStart >= b.startOffset && globalStart <= b.endOffset));
+      } else if (prevMode === 'source') {
+        const hit = blocks.findIndex((b) => globalStart >= b.startOffset && globalStart <= b.endOffset);
+        if (hit >= 0) idx = hit;
+      }
+      this.activeBlockIdx = Math.max(0, Math.min(idx, blocks.length - 1));
+      const blk = blocks[this.activeBlockIdx];
+      const relS = Math.max(0, Math.min(blk.rawText.length, globalStart - blk.startOffset));
+      const relE = Math.max(relS, Math.min(blk.rawText.length, globalEnd - blk.startOffset));
+      this.renderLiveHybridDom({ focusRange: [relS, relE] });
+    } else {
+      this.activeBlockTa = null;
+      this.renderPreviewDom();
+    }
+
+    this._internalFocusSwap = false;
     this.place();
     updateSelectionBar(this.app, true);
   }
 
+  /**
+   * Toggle between edit mode ('live' or 'source') and full rendered 'reading' mode (F2).
+   */
+  toggleLivePreview() {
+    if (!this.el || !this.target) return;
+    if (this.mdMode === 'reading') {
+      this.setMarkdownMode(this._lastEditMode === 'source' ? 'source' : 'live');
+    } else {
+      this._lastEditMode = this.mdMode === 'source' ? 'source' : 'live';
+      this.setMarkdownMode('reading');
+    }
+  }
+
+  cycleMarkdownMode() {
+    const order = ['live', 'source', 'reading'];
+    const next = order[(order.indexOf(this.mdMode) + 1) % order.length];
+    this.setMarkdownMode(next);
+  }
+
+  /** Execute a formatting helper that targets this.el cleanly even during Live mode. */
+  runToolbarAction(fn) {
+    if (!this.el) return;
+    if (this.mdMode !== 'live') { fn(); return; }
+    const blk = this._liveBlocks[this.activeBlockIdx];
+    const start = (this.activeBlockTa && blk)
+      ? blk.startOffset + (this.activeBlockTa.selectionStart ?? 0)
+      : (this.el.selectionStart ?? 0);
+    const end = (this.activeBlockTa && blk)
+      ? blk.startOffset + (this.activeBlockTa.selectionEnd ?? 0)
+      : (this.el.selectionEnd ?? start);
+    this._internalFocusSwap = true;
+    this.el.style.display = '';
+    if (this.previewEl) this.previewEl.style.display = 'none';
+    this.el.focus({ preventScroll: true });
+    try { this.el.setSelectionRange(start, end); } catch { /* ignore */ }
+    try {
+      fn();
+    } finally {
+      this.el.style.display = 'none';
+      if (this.previewEl) this.previewEl.style.display = '';
+      this.previewMode = true;
+      this.mdMode = 'live';
+      const nextPos = this.el.selectionStart ?? start;
+      const nextEnd = this.el.selectionEnd ?? nextPos;
+      const nextBlocks = splitMarkdownBlocksWithLines(this.el.value);
+      this._liveBlocks = nextBlocks;
+      let nextIdx = nextBlocks.findIndex((nb) => nextPos >= nb.startOffset && nextPos <= nb.endOffset);
+      if (nextIdx < 0) nextIdx = Math.min(this.activeBlockIdx, nextBlocks.length - 1);
+      this.activeBlockIdx = Math.max(0, nextIdx);
+      const tb = nextBlocks[this.activeBlockIdx];
+      const relS = Math.max(0, nextPos - tb.startOffset);
+      const relE = Math.max(relS, nextEnd - tb.startOffset);
+      this.renderLiveHybridDom({ focusRange: [relS, relE] });
+      this.place();
+      this._internalFocusSwap = false;
+      updateSelectionBar(this.app, true);
+    }
+  }
+
+  _activateLiveBlock(idx, opts = {}) {
+    if (!this.el || this.mdMode !== 'live') return;
+    const blocks = this._liveBlocks.length ? this._liveBlocks : splitMarkdownBlocksWithLines(this.el.value);
+    const clamped = Math.max(0, Math.min(idx, blocks.length - 1));
+    this.activeBlockIdx = clamped;
+    const blk = blocks[clamped];
+    const len = blk ? blk.rawText.length : 0;
+    const pos = opts.atStart ? 0 : opts.pos != null ? Math.max(0, Math.min(len, opts.pos)) : len;
+    this.renderLiveHybridDom({ focusRange: [pos, pos] });
+    this.place();
+    updateSelectionBar(this.app, true);
+  }
+
+  _applyActiveBlockEdit(newBlockText, selStart = newBlockText.length, selEnd = selStart) {
+    if (!this.el) return;
+    const blocks = this._liveBlocks;
+    const blk = blocks[this.activeBlockIdx];
+    if (!blk) return;
+    const fullNorm = this.el.value.replace(/\r\n?/g, '\n');
+    const before = fullNorm.slice(0, blk.startOffset);
+    const after = fullNorm.slice(blk.endOffset);
+    const nextFull = before + newBlockText + after;
+    const globalStart = before.length + selStart;
+    const globalEnd = before.length + selEnd;
+
+    this.el.value = nextFull;
+    try { this.el.setSelectionRange(globalStart, globalEnd); } catch { /* ignore */ }
+
+    const nextBlocks = splitMarkdownBlocksWithLines(nextFull);
+    const cur = nextBlocks[this.activeBlockIdx];
+    const sameBlock = nextBlocks.length === blocks.length &&
+      cur &&
+      globalStart >= cur.startOffset &&
+      globalStart <= cur.endOffset &&
+      cur.rawText === newBlockText &&
+      cur.type === blk.type;
+
+    this._syncingFromBlock = true;
+    this.el.dispatchEvent(new Event('input'));
+    this._syncingFromBlock = false;
+
+    if (sameBlock) {
+      this._liveBlocks = nextBlocks;
+      if (this.activeBlockTa) {
+        this.activeBlockTa.style.height = 'auto';
+        this.activeBlockTa.style.height = Math.max(20, this.activeBlockTa.scrollHeight) + 'px';
+      }
+      this.place();
+      this.app?.surface?.invalidate?.();
+      return;
+    }
+
+    let nextIdx = nextBlocks.findIndex((nb) => globalStart >= nb.startOffset && globalStart <= nb.endOffset);
+    if (nextIdx < 0) nextIdx = Math.min(this.activeBlockIdx, nextBlocks.length - 1);
+    this.activeBlockIdx = nextIdx;
+    const targetBlk = nextBlocks[nextIdx];
+    const relS = Math.max(0, Math.min(targetBlk.rawText.length, globalStart - targetBlk.startOffset));
+    const relE = Math.max(relS, Math.min(targetBlk.rawText.length, globalEnd - targetBlk.startOffset));
+    this.renderLiveHybridDom({ focusRange: [relS, relE] });
+    this.place();
+    this.app?.surface?.invalidate?.();
+  }
+
+  renderLiveHybridDom(opts = {}) {
+    if (!this.previewEl || !this.el) return;
+    const pv = this.previewEl;
+    pv.classList.add('gb-is-live-mode');
+    pv.classList.toggle('gb-show-line-numbers', this.target?.lineNumbers !== false);
+
+    const text = this.el.value;
+    const blocks = splitMarkdownBlocksWithLines(text);
+    this._liveBlocks = blocks;
+    this.activeBlockIdx = Math.max(0, Math.min(this.activeBlockIdx, blocks.length - 1));
+
+    const { body: cleanBody } = parseFrontmatter(stripObsidianComments(text));
+    const docFn = extractFootnotes(cleanBody);
+
+    const frag = document.createDocumentFragment();
+    let newActiveTa = null;
+
+    blocks.forEach((blk, idx) => {
+      const row = document.createElement('div');
+      row.className = 'gb-live-block';
+      row.dataset.blockIdx = String(idx);
+      row.dataset.blockType = blk.type;
+      row.dataset.lineStart = String(blk.startLine);
+
+      if (idx === this.activeBlockIdx) {
+        row.classList.add('is-active');
+        const bta = document.createElement('textarea');
+        bta.className = 'gb-live-active-ta';
+        bta.value = blk.rawText;
+        bta.rows = 1;
+        bta.spellcheck = true;
+        const autoGrow = () => {
+          bta.style.height = 'auto';
+          bta.style.height = Math.max(20, bta.scrollHeight) + 'px';
+        };
+        bta.addEventListener('pointerdown', (e) => e.stopPropagation());
+        bta.addEventListener('input', () => {
+          this._applyActiveBlockEdit(bta.value, bta.selectionStart ?? bta.value.length, bta.selectionEnd ?? bta.value.length);
+        });
+        bta.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this.cancel(); return; }
+          if (e.key === 'F2') { e.preventDefault(); e.stopPropagation(); this.toggleLivePreview(); return; }
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); this.commit(); return; }
+          if (e.key === 'ArrowUp' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+            const s = bta.selectionStart ?? 0;
+            if (s === (bta.selectionEnd ?? s) && !bta.value.slice(0, s).includes('\n') && idx > 0) {
+              e.preventDefault();
+              this._activateLiveBlock(idx - 1, { atEnd: true });
+              return;
+            }
+          }
+          if (e.key === 'ArrowDown' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+            const s = bta.selectionEnd ?? 0;
+            if ((bta.selectionStart ?? 0) === s && !bta.value.slice(s).includes('\n') && idx < this._liveBlocks.length - 1) {
+              e.preventDefault();
+              this._activateLiveBlock(idx + 1, { atStart: true });
+              return;
+            }
+          }
+          if (e.key === 'Backspace' && (bta.selectionStart ?? 0) === 0 && (bta.selectionEnd ?? 0) === 0 && idx > 0) {
+            e.preventDefault();
+            const fullNorm = this.el.value.replace(/\r\n?/g, '\n');
+            if (blk.startOffset > 0 && fullNorm[blk.startOffset - 1] === '\n') {
+              const joinPos = blk.startOffset - 1;
+              const nextFull = fullNorm.slice(0, joinPos) + fullNorm.slice(blk.startOffset);
+              this.el.value = nextFull;
+              this._syncingFromBlock = true;
+              this.el.dispatchEvent(new Event('input'));
+              this._syncingFromBlock = false;
+              const nextBlocks = splitMarkdownBlocksWithLines(nextFull);
+              let nextIdx = nextBlocks.findIndex((nb) => joinPos >= nb.startOffset && joinPos <= nb.endOffset);
+              if (nextIdx < 0) nextIdx = Math.max(0, idx - 1);
+              this.activeBlockIdx = nextIdx;
+              const tb = nextBlocks[nextIdx];
+              const rel = Math.max(0, joinPos - tb.startOffset);
+              this.renderLiveHybridDom({ focusRange: [rel, rel] });
+              this.place();
+              this.app?.surface?.invalidate?.();
+            }
+            return;
+          }
+        });
+        row.appendChild(bta);
+        newActiveTa = bta;
+        row._autoGrow = autoGrow;
+      } else if (blk.isEmpty) {
+        row.innerHTML = '<div class="gb-live-empty-line">&#8203;</div>';
+      } else if (blk.type === 'frontmatter') {
+        const lines = blk.rawText.split('\n').slice(1, -1).join(' · ');
+        const fm = document.createElement('div');
+        fm.className = 'gb-live-frontmatter';
+        fm.innerHTML = `<span class="gb-live-fm-badge">${t('Properties')}</span><span class="gb-live-fm-preview"></span>`;
+        fm.querySelector('.gb-live-fm-preview').textContent = lines || 'YAML';
+        row.appendChild(fm);
+      } else {
+        row.innerHTML = renderMarkdownToHtml(blk.rawText, {
+          footnoteNumbers: docFn.numbers,
+          includeFootnotes: false
+        }) || '<div class="gb-live-empty-line">&#8203;</div>';
+      }
+      frag.appendChild(row);
+    });
+
+    this._internalFocusSwap = true;
+    pv.innerHTML = '';
+    pv.appendChild(frag);
+    this.activeBlockTa = newActiveTa;
+    if (newActiveTa) {
+      const growRow = newActiveTa.parentElement;
+      growRow?._autoGrow?.();
+      requestAnimationFrame(() => growRow?._autoGrow?.());
+      if (Array.isArray(opts.focusRange)) {
+        newActiveTa.focus({ preventScroll: true });
+        try { newActiveTa.setSelectionRange(opts.focusRange[0], opts.focusRange[1]); } catch { /* ignore */ }
+        growRow?._autoGrow?.();
+      }
+    }
+    this._internalFocusSwap = false;
+  }
+
   renderPreviewDom() {
     if (!this.previewEl || !this.el) return;
+    if (this._syncingFromBlock) return;
+    if (this.mdMode === 'live') {
+      this.renderLiveHybridDom();
+      return;
+    }
+    this.previewEl.classList.remove('gb-is-live-mode');
     this.previewEl.innerHTML = renderMarkdownToHtml(this.el.value);
     if (this.target?.lineNumbers !== false) {
       this.previewEl.classList.add('gb-show-line-numbers');

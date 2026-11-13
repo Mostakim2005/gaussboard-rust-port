@@ -361,4 +361,32 @@ flowchart TD
   * `src-tauri/src/power.rs` -> `get_power_status`
   * `src/js/core/audio-clock.js` -> `HardwareAudioClock`
   * `src/js/core/replay.js` -> `drawTimedBezierAtClock`, `jumpToAudioInkHit`, `onStrokeAltClickSeekAudio`
-  * `src/js/platform/tauri-board.js` -> `window.board.archive`, `window.board.search`, `window.board.geometry`, `window.board.colorimetry`, `window.board.markdown`, `window.board.export`, `window.board.window`
+  * `src/js/platform/tauri-board.js` -> `window.board.archive`, `window.board.search`, `window.board.geometry`, `window.board.colorimetry`, `window.board.markdown`, `window.board.export`, `window.board.window`, `window.board.vault`
+
+### [SYSTEM: Obsidian-Vault-Bridge-And-Secure-Origin-Routing] | Aliases: Live Preview pipeline, vault.rs sandbox, useHttpsScheme, boardAssetUrl, clipboard PNG IPC
+> **1-Line Summary:** Pure-ES6 block-hybrid Live Preview DOM overlay coupled with sandboxed `.md` filesystem IPC (`vault.rs`), RGBA-to-PNG system clipboard transcoding (`clipboard.rs`), and origin-aware `boardAssetUrl()` routing for `useHttpsScheme: true`.
+```mermaid
+flowchart LR
+    subgraph Editor ["Pure-JS Markdown Live Preview"]
+        TE["TextEditor (live | source | reading)"] --> Split["splitMarkdownBlocksWithLines()"]
+        Split --> NonActive["Rendered XHTML blocks (renderMarkdownToHtml)"]
+        Split --> Active["Single borderless textarea (.gb-live-active-ta)"]
+        TE -->|Sync / Push| AppObs["App.syncObjectFromObsidian / pushObjectToObsidian"]
+    end
+
+    subgraph OriginAndBridge ["Tauri v2 Secure Origin & Native IPC"]
+        Cfg["tauri.conf.json (useHttpsScheme: true)"] --> Origin["https://app.localhost"]
+        Origin --> AssetUrl["boardAssetUrl() & protocol_app.rs"]
+        Origin --> MicPerm["WebView2 PermissionRequested / Android RECORD_AUDIO"]
+        AppObs -->|tauri-board.js| Vault["vault.rs (canonical root & .md guard)"]
+        Clip["clipboardRead / clipboardWrite (ownWriteAt guard)"] --> ClipRs["clipboard.rs (png RGBA <-> data URL + caps)"]
+    end
+```
+* **Code Anchors (Grep Targets):**
+  * `src/js/core/markdown.js` -> `splitMarkdownBlocksWithLines`, `renderMarkdownToHtml`
+  * `src/js/ui/textedit.js` -> `TextEditor.setMarkdownMode`, `TextEditor.renderLiveHybridDom`, `TextEditor.runToolbarAction`
+  * `src/js/core/util.js` -> `boardAssetUrl`
+  * `src/js/platform/tauri-board.js`, `src/js/platform/web-adapter.js` -> `vault`, `clipboardWrite`, `clipboardRead`
+  * `src-tauri/src/vault.rs` -> `canonical_vault_root`, `resolve_safe_md_path`, `vault_list_notes`, `vault_read_note`, `vault_write_note`
+  * `src-tauri/src/clipboard.rs` -> `decode_png_data_url_to_rgba`, `encode_rgba_to_png_data_url`, `clipboard_read`, `clipboard_write`
+  * `src-tauri/src/lib.rs` -> `configure_webview2_permissions`

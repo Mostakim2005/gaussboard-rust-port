@@ -881,6 +881,23 @@ function sizeRow(sizes, current, onPick, color = '#201f1e') {
   return wrap;
 }
 
+function tapeWidthRow(sizes, current, onPick, color = '#a855f7') {
+  const wrap = h('div', { class: 'sizes tape-sizes' });
+  const barColor = inkPaint(color);
+  const minS = Math.min(...sizes);
+  const maxS = Math.max(...sizes);
+  for (const s of sizes) {
+    const ratio = maxS > minS ? (s - minS) / (maxS - minS) : 0.5;
+    const barH = Math.round(3 + ratio * 11);
+    const barW = Math.round(14 + ratio * 8);
+    const b = h('button', { class: 'size tape-size' + (s === current ? ' active' : ''), title: t('{s} px', { s }) });
+    b.innerHTML = `<i style="width:${barW}px;height:${barH}px;background:${barColor}"${isDarkBoard() && isDarkColor(barColor, 0.2) ? ' class="ink-edge"' : ''}></i>`;
+    b.addEventListener('click', () => { markActive(wrap, b); onPick(s); });
+    wrap.appendChild(b);
+  }
+  return wrap;
+}
+
 /** Each face previewed in itself, so 'Handwriting' looks like handwriting. */
 function fontRow(fonts, current, onPick) {
   const wrap = h('div', { class: 'font-row' });
@@ -1875,7 +1892,7 @@ export function openToolPopover(app, anchor, tool) {
 
     body = h('div', { style: 'min-width:280px;padding:2px 4px;' },
       h('h4', {}, t('Tape width')),
-      sizeRow([16, 24, 34, 48, 64], curWidth, (v) => {
+      tapeWidthRow([16, 24, 34, 48, 64], curWidth, (v) => {
         s.tapeWidth = v; app.saveSettings();
       }, curColor),
       h('h4', { style: 'margin-top:12px' }, t('Tape skin & colour')),

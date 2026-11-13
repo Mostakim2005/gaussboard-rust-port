@@ -1,4 +1,4 @@
-import { boxesIntersect } from './util.js';
+import { boxesIntersect, boardAssetUrl } from './util.js';
 import { boundsOf } from './store.js';
 import { replayStrokesForTrack } from './replay-clock.js';
 
@@ -60,13 +60,13 @@ export class ReplayEngine {
     if (this.audio) {
       this.audio.removeAttribute?.('src');
       if (track?.assetId) {
-      this.audio.src = `app://board/asset/${track.assetId}`;
+      this.audio.src = boardAssetUrl(track.assetId);
       this.audio.load();
       }
     }
     if (track?.assetId && typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
       try {
-        fetch(`app://board/asset/${track.assetId}`)
+        fetch(boardAssetUrl(track.assetId))
           .then((r) => r.arrayBuffer())
           .then((buf) => {
             if (generation !== this.loadGeneration) return null;

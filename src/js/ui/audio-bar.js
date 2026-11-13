@@ -6,6 +6,7 @@ import { icon } from './icons.js';
 import { t } from '../i18n.js';
 import { DensityCanvas } from './density-canvas.js';
 import { replayDisplayMode } from '../core/replay-clock.js';
+import { boardAssetUrl } from '../core/util.js';
 
 export function formatTime(ms) {
   if (!(ms > 0)) return '00:00';
@@ -333,7 +334,7 @@ export class AudioBar {
     if (!tr) return;
     let objectUrl = null;
     try {
-      const url = `app://board/asset/${tr.assetId}`;
+      const url = boardAssetUrl(tr.assetId);
       const resp = await fetch(url);
       if (!resp.ok) throw new Error(`Audio download failed (${resp.status})`);
       const blob = await resp.blob();

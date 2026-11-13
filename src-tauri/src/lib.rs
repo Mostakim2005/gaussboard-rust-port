@@ -19,6 +19,7 @@ pub mod search;
 pub mod splash;
 pub mod state;
 pub mod storage;
+pub mod vault;
 pub mod win32_shell;
 
 use crate::{lan_sync::LanSyncManager, state::AppState};
@@ -84,6 +85,39 @@ fn updates_install(_opts: Option<Value>) -> Value {
 #[tauri::command]
 fn updates_note() -> Value {
     Value::Null
+}
+
+#[cfg(target_os = "windows")]
+fn configure_webview2_permissions(app: &AppHandle) {
+    use webview2_com::{
+        Microsoft::Web::WebView2::Win32::{
+            COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_CAMERA,
+            COREWEBVIEW2_PERMISSION_KIND_MICROPHONE, COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+        },
+        PermissionRequestedEventHandler,
+    };
+    if let Some(main_win) = app.get_webview_window("main") {
+        let _ = main_win.with_webview(|platform_webview| unsafe {
+            if let Ok(core) = platform_webview.controller().CoreWebView2() {
+                let handler = PermissionRequestedEventHandler::create(Box::new(
+                    move |_sender, args| {
+                        if let Some(args) = args.as_ref() {
+                            let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
+                            if args.PermissionKind(&mut kind).is_ok()
+                                && (kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE
+                                    || kind == COREWEBVIEW2_PERMISSION_KIND_CAMERA)
+                            {
+                                let _ = args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW);
+                            }
+                        }
+                        Ok(())
+                    },
+                ));
+                let mut token: i64 = 0;
+                let _ = core.add_PermissionRequested(&handler, &mut token);
+            }
+        });
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -165,6 +199,8 @@ pub fn run() {
             }
 
             splash::init_splash_bypass_and_watchdog(app.handle());
+            #[cfg(target_os = "windows")]
+            configure_webview2_permissions(app.handle());
             win32_shell::spawn_win32_clipboard_listener(app.handle().clone());
             Ok(())
         })
@@ -266,6 +302,10 @@ pub fn run() {
             colorimetry::color_invert_theme_ink,
             markdown_parser::markdown_to_html,
             power::get_power_status,
+            vault::vault_choose_folder,
+            vault::vault_list_notes,
+            vault::vault_read_note,
+            vault::vault_write_note
         ])
         .run(tauri::generate_context!());
 

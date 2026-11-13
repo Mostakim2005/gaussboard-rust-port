@@ -12,6 +12,7 @@
   const { listen } = tauri.event;
 
   let cachedClipboardSig = null;
+  let ownWriteAt = 0;
 
   async function refreshClipboardSignature() {
     try {
@@ -28,6 +29,7 @@
   if (window.__TAURI__?.event?.listen) {
     try {
       window.__TAURI__.event.listen('board://clipboard-seq', (e) => {
+        if (Date.now() - ownWriteAt < 350) return;
         cachedClipboardSig = 'seq:' + e.payload;
       });
     } catch {}
@@ -248,15 +250,27 @@
     onMenu: (cb) => { listen('app:menu', (e) => cb(e.payload)); },
     onFlush: (cb) => { listen('storage:flush', (e) => cb(e.payload)); },
 
-    clipboardRead: () => invoke('clipboard_read'),
-    clipboardWrite: async (payload) => {
-      const res = await invoke('clipboard_write', { payload });
+    clipboardRead: async () => {
+      const res = await invoke('clipboard_read');
       if (res && typeof res.signature === 'string') {
         cachedClipboardSig = res.signature;
-      } else {
-        await refreshClipboardSignature();
       }
-      return !!(res && res.ok !== false);
+      return res;
+    },
+    clipboardWrite: async (payload) => {
+      ownWriteAt = Date.now();
+      try {
+        const res = await invoke('clipboard_write', { payload });
+        ownWriteAt = Date.now();
+        if (res && typeof res.signature === 'string') {
+          cachedClipboardSig = res.signature;
+        } else {
+          await refreshClipboardSignature();
+        }
+        return !!(res && res.ok !== false);
+      } catch {
+        return false;
+      }
     },
     clipboardSignature: () => cachedClipboardSig,
 
@@ -381,6 +395,13 @@
 
     power: {
       getStatus: () => invoke('get_power_status')
+    },
+
+    vault: {
+      chooseFolder: () => invoke('vault_choose_folder'),
+      listNotes: (vaultRoot) => invoke('vault_list_notes', { vaultRoot }),
+      readNote: (vaultRoot, relPath) => invoke('vault_read_note', { vaultRoot, relPath }),
+      writeNote: (vaultRoot, relPath, content) => invoke('vault_write_note', { vaultRoot, relPath, content })
     },
 
     // Desktop menu labels catalog (retained for 7-locale i18n parity across native host menus)

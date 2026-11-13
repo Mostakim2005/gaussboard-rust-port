@@ -3,7 +3,7 @@ use crate::state::{AppState, BoardIndexEntry, BoardMeta, LastBoardConfig, Storag
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -147,17 +147,27 @@ fn extract_board_meta(file_stem: &str, raw: &Value, mtime_ms: u64) -> BoardMeta 
 
 #[tauri::command]
 pub async fn boards_list(state: State<'_, Arc<AppState>>) -> Result<Vec<BoardMeta>, String> {
+    let state_arc = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || boards_list_blocking(&state_arc))
+        .await
+        .map_err(|e| format!("boards_list join error: {}", e))?
+}
+
+fn boards_list_blocking(state: &Arc<AppState>) -> Result<Vec<BoardMeta>, String> {
     let boards_dir = state.boards_dir();
     let dir_key = boards_dir.to_string_lossy().to_string();
     let _ = fs::create_dir_all(&boards_dir);
 
     let entries = fs::read_dir(&boards_dir).map_err(|e| e.to_string())?;
+    let cached_dir: HashMap<String, BoardIndexEntry> = {
+        let guard = state.board_index.lock();
+        guard.dirs.get(&dir_key).cloned().unwrap_or_default()
+    };
+
     let mut seen_files = HashSet::new();
     let mut results = Vec::new();
+    let mut updated_entries: HashMap<String, BoardIndexEntry> = HashMap::new();
     let mut index_dirty = false;
-
-    let mut index_guard = state.board_index.lock();
-    let dir_cache = index_guard.dirs.entry(dir_key).or_default();
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -176,7 +186,7 @@ pub async fn boards_list(state: State<'_, Arc<AppState>>) -> Result<Vec<BoardMet
         let (mtime, size) = file_mtime_ms_and_size(&meta);
         seen_files.insert(file_name.clone());
 
-        if let Some(cached) = dir_cache.get(&file_name) {
+        if let Some(cached) = cached_dir.get(&file_name) {
             if cached.mtime == mtime && cached.size == size {
                 let mut bm = cached.meta.clone();
                 bm.modified = mtime;
@@ -185,12 +195,12 @@ pub async fn boards_list(state: State<'_, Arc<AppState>>) -> Result<Vec<BoardMet
             }
         }
 
-        // Cache miss or modified file: parse JSON
+        // Cache miss or modified file: parse JSON outside any mutex lock
         let file_stem = file_name.trim_end_matches(".json");
         if let Ok(content) = fs::read_to_string(&path) {
             if let Ok(raw_json) = serde_json::from_str::<Value>(&content) {
                 let bm = extract_board_meta(file_stem, &raw_json, mtime);
-                dir_cache.insert(
+                updated_entries.insert(
                     file_name,
                     BoardIndexEntry {
                         mtime,
@@ -204,17 +214,26 @@ pub async fn boards_list(state: State<'_, Arc<AppState>>) -> Result<Vec<BoardMet
         }
     }
 
-    // Prune deleted files from index cache
-    let before_len = dir_cache.len();
-    dir_cache.retain(|k, _| seen_files.contains(k));
-    if dir_cache.len() != before_len {
+    let removed_any = cached_dir.keys().any(|k| !seen_files.contains(k));
+    if removed_any {
         index_dirty = true;
     }
 
-    if index_dirty {
-        state.persist_index(&index_guard);
+    let snapshot_to_persist = if index_dirty {
+        let mut guard = state.board_index.lock();
+        let dir_cache = guard.dirs.entry(dir_key).or_default();
+        for (k, v) in updated_entries {
+            dir_cache.insert(k, v);
+        }
+        dir_cache.retain(|k, _| seen_files.contains(k));
+        Some(guard.clone())
+    } else {
+        None
+    };
+
+    if let Some(index_snapshot) = snapshot_to_persist {
+        state.persist_index(&index_snapshot);
     }
-    drop(index_guard);
 
     // Sort descending by modified epoch ms
     results.sort_by(|a, b| b.modified.cmp(&a.modified));

@@ -111,7 +111,7 @@ export const DEFAULT_SETTINGS = {
   brushColor: '#201f1e', brushWidth: 8, brushOpacity: 0.9, brushSoftness: 'medium', brushVelocityThinning: true,
   fountainColor: '#002050', fountainWidth: 4, fountainSlant: 45, fountainFlex: 'normal',
   calligraphyColor: '#1a1a1a', calligraphyWidth: 12, calligraphyAngle: 35, calligraphyFlatness: 4,
-  textMarkdown: true, noteMarkdown: true, defaultCardStyle: 'canvas', wikilinkDblClick: 'ask', quickActionPopovers: true,
+  textMarkdown: true, noteMarkdown: true, markdownEditMode: 'live', obsidianVaultPath: '', obsidianVaultName: '', defaultCardStyle: 'canvas', wikilinkDblClick: 'ask', quickActionPopovers: true,
   // My boards' folders: a catalogue on this device, never inside a board (core/folders.js)
   folders: [], boardFolders: {},
   /*
@@ -271,6 +271,8 @@ class App {
     this.tool = 'pen';
     this.clipboard = [];
     this.clipStamp = null;
+    this._excerptMetaBySig = new Map();
+    this._lastExcerptMeta = null;
     this.boardPoint = null;
     this.ruler = { visible: false, x: 0, y: 0, angle: 0, length: 900, thickness: 78, snap: true, kind: 'ruler' };
     this.textEditor = new TextEditor(this);
@@ -1912,33 +1914,56 @@ class App {
   async openBoardRef(ref) {
     if (!ref) return false;
     await this.refreshBoardDirectory();
-    const target = lookupBoard(ref);
+    const openTabs = this.tabBar?.tabs || [];
+    const openMatch = openTabs.find((tb) =>
+      (ref.id && tb.id === ref.id) ||
+      (ref.name && String(tb.title || '').toLowerCase() === String(ref.name).toLowerCase())
+    );
+    const target = lookupBoard(ref) || (openMatch ? { id: openMatch.id, name: openMatch.title } : null);
     if (!target) { this.toast(t('“{name}” is not on this computer', { name: ref.name || '?' })); return false; }
-    if (target.id === this.store.doc.id) {
+
+    const jumpInMain = () => {
       if (ref.page > 0 && this.pageCount) this.goToPage(ref.page - 1);
       if (ref.heading) this.focusMarkdownHeading(ref.heading);
       else if (ref.box && this.surface?.cam) {
         this.surface.cam.glideTo(ref.box, this.surface.width, this.surface.height, { duration: 400 });
       }
+    };
+
+    if (target.id === this.store.doc.id) {
+      jumpInMain();
       return true;
     }
+
+    if (!ref.forceMain && this.splitWorkspace?.enabled && this.splitWorkspace.leftBoardId === target.id) {
+      if (this.splitWorkspace.scrollLeftToRef?.(ref)) return true;
+    }
+
     this.textEditor.commit();
     this.mathEditor?.close();
     const from = { id: this.store.doc.id, name: this.store.doc.name, camera: this.surface.cam.toJSON() };
+
+    if (openMatch && this.tabBar?.switchTab) {
+      this.backStack.push({ ...from, to: target.id });
+      if (this.backStack.length > 30) this.backStack.shift();
+      await this.tabBar.switchTab(openMatch.id);
+      requestAnimationFrame(jumpInMain);
+      this.syncBackPill();
+      return true;
+    }
+
     try { await this.persist(); } catch { /* the board stays open: nothing is lost by staying */ }
-    let data = null;
-    try { data = await window.board.boards.load(target.id); } catch { data = null; }
+    let data = this.tabBar?.cache?.get(target.id)?.docSnapshot
+      ? structuredClone(this.tabBar.cache.get(target.id).docSnapshot)
+      : null;
+    if (!data) {
+      try { data = await window.board.boards.load(target.id); } catch { data = null; }
+    }
     if (!data) { this.toast(t('“{name}” is not on this computer', { name: ref.name || '?' })); return false; }
     this.backStack.push({ ...from, to: target.id });
     if (this.backStack.length > 30) this.backStack.shift();
     await this.loadBoard(data, { claimed: true });
-    requestAnimationFrame(() => {
-      if (ref.page > 0 && this.pageCount) this.goToPage(ref.page - 1);
-      if (ref.heading) this.focusMarkdownHeading(ref.heading);
-      else if (ref.box && this.surface?.cam) {
-        this.surface.cam.glideTo(ref.box, this.surface.width, this.surface.height, { duration: 400 });
-      }
-    });
+    requestAnimationFrame(jumpInMain);
     this.syncBackPill();
     return true;
   }
@@ -1968,6 +1993,170 @@ class App {
       return true;
     }
     return false;
+  }
+
+  /** Choose an Obsidian vault root folder for bidirectional .md sync. */
+  async chooseObsidianVault() {
+    const picker = window.board?.vault?.chooseFolder;
+    if (typeof picker !== 'function') {
+      this.toast(t('Obsidian vault bridge is not supported in this host.'));
+      return null;
+    }
+    try {
+      const res = await picker();
+      if (!res || res.canceled || !res.path) return null;
+      this.settings.obsidianVaultPath = res.path;
+      this.settings.obsidianVaultName = res.name || res.path.split(/[\\/]/).filter(Boolean).pop() || 'Vault';
+      this.saveSettings();
+      this.syncUI();
+      this.toast(t('Connected Obsidian vault: {name}', { name: this.settings.obsidianVaultName }));
+      return res;
+    } catch (e) {
+      this.toast(t('Could not connect Obsidian vault: {msg}', { msg: e?.message || String(e) }));
+      return null;
+    }
+  }
+
+  disconnectObsidianVault() {
+    this.settings.obsidianVaultPath = '';
+    this.settings.obsidianVaultName = '';
+    this.saveSettings();
+    this.syncUI();
+    this.toast(t('Obsidian vault disconnected'));
+  }
+
+  async listObsidianVaultNotes({ chooseIfMissing = false } = {}) {
+    if (!this.settings.obsidianVaultPath) {
+      if (!chooseIfMissing) return [];
+      const picked = await this.chooseObsidianVault();
+      if (!picked?.path) return [];
+    }
+    const listFn = window.board?.vault?.listNotes;
+    if (typeof listFn !== 'function') return [];
+    try {
+      return await listFn(this.settings.obsidianVaultPath);
+    } catch (e) {
+      this.toast(t('Could not read Obsidian vault notes: {msg}', { msg: e?.message || String(e) }));
+      return [];
+    }
+  }
+
+  linkObjectToObsidianNote(obj, relPath) {
+    if (!obj || !relPath) return false;
+    this.store.update(obj.id, { obsidianPath: relPath, markdown: true }, 'link obsidian note');
+    if (this.textEditor?.active && this.textEditor.target?.id === obj.id) {
+      this.textEditor.target = this.store.get(obj.id) || obj;
+    }
+    this.surface.invalidate();
+    this.syncUI();
+    this.toast(t('Linked to {path}', { path: relPath }));
+    return true;
+  }
+
+  unlinkObjectObsidianNote(obj) {
+    if (!obj) return false;
+    this.store.update(obj.id, { obsidianPath: null, obsidianSyncedAt: null }, 'unlink obsidian note');
+    if (this.textEditor?.active && this.textEditor.target?.id === obj.id) {
+      this.textEditor.target = this.store.get(obj.id) || obj;
+    }
+    this.surface.invalidate();
+    this.syncUI();
+    this.toast(t('Unlinked Obsidian note'));
+    return true;
+  }
+
+  async syncObjectFromObsidian(obj) {
+    if (!obj?.obsidianPath) return false;
+    if (!this.settings.obsidianVaultPath) {
+      const picked = await this.chooseObsidianVault();
+      if (!picked?.path) return false;
+    }
+    try {
+      const res = await window.board.vault.readNote(this.settings.obsidianVaultPath, obj.obsidianPath);
+      if (!res?.ok) throw new Error(res?.error || 'read failed');
+      const content = String(res.content ?? '');
+      this.store.update(obj.id, {
+        text: content,
+        markdown: true,
+        obsidianSyncedAt: res.modifiedMs || Date.now()
+      }, 'sync from obsidian');
+      if (this.textEditor?.active && this.textEditor.target?.id === obj.id) {
+        this.textEditor.setValue?.(content);
+      }
+      this.surface.invalidate();
+      this.syncUI();
+      this.toast(t('Synced from {path}', { path: obj.obsidianPath }));
+      return true;
+    } catch (e) {
+      this.toast(t('Sync from Obsidian failed: {msg}', { msg: e?.message || String(e) }));
+      return false;
+    }
+  }
+
+  async pushObjectToObsidian(obj, textOverride = null) {
+    if (!obj?.obsidianPath) return false;
+    if (!this.settings.obsidianVaultPath) {
+      const picked = await this.chooseObsidianVault();
+      if (!picked?.path) return false;
+    }
+    const text = textOverride != null
+      ? String(textOverride)
+      : (this.textEditor?.active && this.textEditor.target?.id === obj.id && this.textEditor.el)
+        ? this.textEditor.el.value
+        : String(obj.text ?? '');
+    try {
+      const res = await window.board.vault.writeNote(this.settings.obsidianVaultPath, obj.obsidianPath, text);
+      if (!res?.ok) throw new Error(res?.error || 'write failed');
+      this.store.update(obj.id, { obsidianSyncedAt: res.modifiedMs || Date.now() }, 'push to obsidian');
+      this.surface.invalidate();
+      this.syncUI();
+      this.toast(t('Pushed to {path}', { path: obj.obsidianPath }));
+      return true;
+    } catch (e) {
+      this.toast(t('Push to Obsidian failed: {msg}', { msg: e?.message || String(e) }));
+      return false;
+    }
+  }
+
+  async insertObsidianVaultNote(relPath) {
+    if (!this.settings.obsidianVaultPath || !relPath) return null;
+    try {
+      const res = await window.board.vault.readNote(this.settings.obsidianVaultPath, relPath);
+      if (!res?.ok) throw new Error(res?.error || 'read failed');
+      const content = String(res.content ?? '');
+      const view = this.surface.cam.viewport(this.surface.width, this.surface.height);
+      const w = this.worldSize(360);
+      const lineCount = Math.max(4, Math.min(24, content.split(/\r?\n/).length));
+      const h = this.worldSize(Math.max(180, lineCount * 24 + 40));
+      const obj = {
+        id: uid('t'),
+        type: 'text',
+        x: view.x + (view.w - w) / 2,
+        y: view.y + (view.h - h) / 2,
+        w,
+        h,
+        text: content,
+        markdown: true,
+        obsidianPath: relPath,
+        obsidianSyncedAt: res.modifiedMs || Date.now(),
+        color: this.settings.textColor || '#201f1e',
+        fontSize: this.worldSize(18),
+        font: this.settings.textFont || 'sans',
+        cardStyle: 'card',
+        rotation: 0
+      };
+      this.interaction?.placeOnPaper?.(obj);
+      this.store.add(obj, 'insert obsidian note');
+      this.setTool('select');
+      this.setSelection([obj.id]);
+      this.surface.invalidate();
+      this.syncUI();
+      this.toast(t('Inserted {path}', { path: relPath }));
+      return obj;
+    } catch (e) {
+      this.toast(t('Could not insert Obsidian note: {msg}', { msg: e?.message || String(e) }));
+      return null;
+    }
   }
 
   openBoard(id) {
@@ -2253,11 +2442,12 @@ class App {
     const o = this.store.get(id);
     if (!o || o.type !== 'curtain') return false;
     const next = !o.revealed;
-    if (next) {
+    const isTape = o.subtype === 'tape';
+    if (next && !isTape) {
       this.surface.fadeOut(o);
       for (const w of this.onCovers([id])) this.surface.fadeOut(w);
     }
-    const label = o.subtype === 'tape'
+    const label = isTape
       ? (next ? 'reveal tape' : 'conceal tape')
       : (next ? 'reveal' : 'conceal');
     this.setCovers([id], next, label);
@@ -2265,8 +2455,8 @@ class App {
     this.surface.invalidate();
     this.syncUI();
 
-    if (next && o.subtype === 'tape' && this.settings.tapeAssessOnReveal !== false) {
-      this.promptTapeAssessment(o);
+    if (next && isTape && this.settings.tapeAssessOnReveal !== false) {
+      requestAnimationFrame(() => this.promptTapeAssessment(o));
     }
     return true;
   }
@@ -3655,9 +3845,7 @@ class App {
     };
     const image = excerptImageObject(payload, center);
     if (!image) return false;
-    this.clipboard = [image];
-    try { await window.board?.clipboardWrite?.({ image: payload.dataUrl }); } catch { /* in-app clipboard remains available */ }
-    this.clipStamp = this.clipboardStamp();
+    await this._storeExcerptOnClipboard(image, payload.dataUrl);
     this.toast(t('Excerpt copied — paste it into another board'));
     return true;
   }
@@ -3783,9 +3971,7 @@ class App {
       if (!image) return;
       image.isExcerpt = true;
 
-      this.clipboard = [image];
-      try { await window.board?.clipboardWrite?.({ image: payload.dataUrl }); } catch {}
-      this.clipStamp = this.clipboardStamp();
+      await this._storeExcerptOnClipboard(image, payload.dataUrl);
 
       this.toast(t('Excerpt captured — copied to clipboard! Paste onto any board.'), 'check');
     };
@@ -3804,12 +3990,91 @@ class App {
     stage.appendChild(overlay);
   }
 
+  async _storeExcerptOnClipboard(image, dataUrl) {
+    this.clipboard = [image];
+    const meta = image?.excerptSource ? {
+      excerptSource: structuredClone(image.excerptSource),
+      isExcerpt: true,
+      w: image.w,
+      h: image.h,
+      dataUrl: dataUrl || '',
+      at: Date.now()
+    } : null;
+    if (meta) this._lastExcerptMeta = meta;
+    try { await window.board?.clipboardWrite?.({ image: dataUrl }); } catch { /* in-app clipboard remains available */ }
+    this.clipStamp = this.clipboardStamp();
+    if (meta && this.clipStamp && this._excerptMetaBySig) {
+      this._excerptMetaBySig.set(this.clipStamp, meta);
+      if (this._excerptMetaBySig.size > 40) {
+        const firstKey = this._excerptMetaBySig.keys().next().value;
+        if (firstKey) this._excerptMetaBySig.delete(firstKey);
+      }
+    }
+  }
+
+  _matchExcerptMeta(sig = null, insertedObjs = null) {
+    if (sig && this._excerptMetaBySig?.has(sig)) return this._excerptMetaBySig.get(sig);
+    const meta = this._lastExcerptMeta;
+    if (!meta || Date.now() - meta.at > 180000) return null;
+    if (Array.isArray(insertedObjs) && insertedObjs.length === 1) {
+      const o = insertedObjs[0];
+      const expectedRatio = meta.w / (meta.h || 1);
+      const actualRatio = o.w / (o.h || 1);
+      if (Math.abs(expectedRatio - actualRatio) < 0.03 && sig && sig === this.clipStamp) {
+        return meta;
+      }
+    }
+    return null;
+  }
+
+  async recordExcerptBacklink(obj, targetStore = this.store) {
+    const src = obj?.excerptSource;
+    const targetDoc = targetStore?.doc;
+    if (!src?.boardId || !targetDoc?.id || src.boardId === targetDoc.id) return false;
+    const entry = {
+      excerptObjId: obj.id,
+      targetBoardId: targetDoc.id,
+      targetBoardName: String(targetDoc.name || targetDoc.title || t('Untitled board')).slice(0, 200),
+      targetBounds: { x: obj.x, y: obj.y, w: obj.w, h: obj.h },
+      sourcePage: src.page || 1,
+      sourceBounds: src.bounds ? { ...src.bounds } : null,
+      createdAt: Date.now()
+    };
+    const upsert = (doc) => {
+      if (!doc) return false;
+      const list = Array.isArray(doc.excerptBacklinks) ? [...doc.excerptBacklinks] : [];
+      const idx = list.findIndex((b) => b.excerptObjId === entry.excerptObjId && b.targetBoardId === entry.targetBoardId);
+      if (idx >= 0) list[idx] = entry;
+      else list.push(entry);
+      doc.excerptBacklinks = list.slice(-100);
+      return true;
+    };
+    if (this.store?.doc?.id === src.boardId) upsert(this.store.doc);
+    if (this.splitWorkspace?.leftBoardId === src.boardId && this.splitWorkspace?.leftStore?.doc) {
+      upsert(this.splitWorkspace.leftStore.doc);
+      this.splitWorkspace.saveLeftBoardDebounced?.();
+    }
+    if (this.tabBar?.cache?.has(src.boardId)) {
+      upsert(this.tabBar.cache.get(src.boardId)?.docSnapshot);
+    }
+    if (window.board?.boards?.load && window.board?.boards?.save) {
+      try {
+        const diskDoc = await window.board.boards.load(src.boardId);
+        if (diskDoc && upsert(diskDoc)) {
+          await window.board.boards.save(diskDoc);
+        }
+      } catch { /* best-effort background backlink persistence */ }
+    }
+    return true;
+  }
+
   /** Place an excerpt delivered by a drag operation into a chosen board store. */
   insertExcerptPayload(payload, at, { store = this.store, surface = this.surface, onChange = null } = {}) {
     if (!validateExcerptPayload(payload) || !store?.add || !surface) return false;
     const obj = excerptImageObject(payload, at);
     if (!obj) return false;
     store.add(obj, 'add linked excerpt');
+    this.recordExcerptBacklink(obj, store);
     surface.selection?.clear?.();
     surface.selection?.add?.(obj.id);
     surface.invalidate?.();
@@ -3826,6 +4091,15 @@ class App {
       name: source.boardName,
       page: source.page || 0,
       box: source.bounds
+    });
+  }
+
+  openExcerptCopy(backlink) {
+    if (!backlink?.targetBoardId) return false;
+    return this.openBoardRef({
+      id: backlink.targetBoardId,
+      name: backlink.targetBoardName,
+      box: backlink.targetBounds
     });
   }
 
@@ -3974,15 +4248,25 @@ class App {
     if (!wp) wp = this.pastePoint();
     const held = this.clipboard.length;
     const now = await this.clipboardNow();
+    const sigMatchedExcerpt = !!(held && this.clipboard[0]?.excerptSource && now?.signature && this._excerptMetaBySig?.has(now.signature));
     const moved = !!now && now.signature != null && this.clipStamp != null
-      && now.signature !== this.clipStamp;
+      && now.signature !== this.clipStamp && !sigMatchedExcerpt;
 
     if (now && (moved || !held)) {
       const point = wp;
       if (now.image) {
         try {
           const blob = await (await fetch(now.image)).blob();
-          await insertImageFiles(this, [new File([blob], clipboardFileName(blob.type || now.kind), { type: blob.type || now.kind || 'image/png' })], point);
+          const added = await insertImageFiles(this, [new File([blob], clipboardFileName(blob.type || now.kind), { type: blob.type || now.kind || 'image/png' })], point);
+          const meta = this._matchExcerptMeta(now.signature, added);
+          if (meta && Array.isArray(added) && added.length) {
+            for (const item of added) {
+              item.excerptSource = structuredClone(meta.excerptSource);
+              item.isExcerpt = true;
+              this.store.update(item.id, { excerptSource: item.excerptSource, isExcerpt: true }, 'attach excerpt metadata');
+              this.recordExcerptBacklink(item, this.store);
+            }
+          }
           return;
         } catch { /* fall through to whatever else is there */ }
       }
@@ -3994,6 +4278,9 @@ class App {
     if (!box) { this.paste(); return; }
     const copies = this.cloneBatch(this.clipboard, wp.x - (box.x + box.w / 2), wp.y - (box.y + box.h / 2));
     this.store.addMany(copies, 'paste');
+    for (const copy of copies) {
+      if (copy.excerptSource?.boardId) this.recordExcerptBacklink(copy, this.store);
+    }
     this.setSelection(copies.map((o) => o.id));
     this.clipboard = copies.map((o) => structuredClone(o));
   }
@@ -5608,7 +5895,16 @@ class App {
       if (imageItem) {
         e.preventDefault();
         const file = imageItem.getAsFile();
-        await insertImageFiles(this, [file], this.pastePoint());
+        const added = await insertImageFiles(this, [file], this.pastePoint());
+        const meta = this._matchExcerptMeta(this.clipboardStamp(), added);
+        if (meta && Array.isArray(added) && added.length) {
+          for (const item of added) {
+            item.excerptSource = structuredClone(meta.excerptSource);
+            item.isExcerpt = true;
+            this.store.update(item.id, { excerptSource: item.excerptSource, isExcerpt: true }, 'attach excerpt metadata');
+            this.recordExcerptBacklink(item, this.store);
+          }
+        }
         return;
       }
       const text = e.clipboardData?.getData('text/plain');

@@ -1598,6 +1598,7 @@ body.presenting.show-tools #toolbar { translate: 0 0; opacity: 1; pointer-events
 .panel.page.open { transition: opacity .15s ease, visibility 0s; }
 .panel.page header { background: var(--surface); }
 .panel.page .body { padding: 0; overflow: hidden; display: flex; }
+.panel.page #boardList:not(.gallery) { padding: 20px 24px; width: 100%; overflow-y: auto; }
 .gallery { flex: 1; min-height: 0; display: grid; grid-template-columns: 236px minmax(0, 1fr); }
 .gal-side { overflow-y: auto; padding: 14px 8px; background: var(--surface); border-inline-end: 1px solid var(--stroke); }
 .side-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; color: var(--text-2); padding: 4px 12px 10px; }
@@ -5739,10 +5740,24 @@ body.theme-light .dict-word { color: #0f6cbd; }
  * =================================================================== */
 #ctxbar.obsidian-toolbar {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   gap: 2px;
-  padding: 3px 6px;
+  padding: 4px 6px;
+  max-width: min(540px, calc(100vw - 24px));
+  overflow-x: visible;
+  z-index: 99;
+}
+#ctxbar.obsidian-toolbar.expanded {
+  flex-wrap: wrap;
+  max-width: min(720px, calc(100vw - 24px));
+}
+.sizes.tape-sizes .size.tape-size {
+  width: 30px;
+}
+.sizes.tape-sizes .size.tape-size i {
+  border-radius: 3px;
+}
   background: var(--surface-glass, rgba(255, 255, 255, 0.96));
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -5987,3 +6002,97 @@ body.presenting #pagestrip { display: none; }
 #radialMenu .rad-label.show { opacity: 1; }
 @keyframes rad-in { from { opacity: 0; transform: scale(.85); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { #radialMenu .rad-ring, #radialMenu .rad-btn { animation: none; } }
+
+/* Obsidian Cursor-Line Live Preview & Vault Bridge */
+.gb-live-preview.gb-is-live-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: text;
+}
+.gb-live-block {
+  position: relative;
+  min-height: 1.1em;
+}
+.gb-live-block > :first-child { margin-top: 0; }
+.gb-live-block > :last-child { margin-bottom: 0; }
+.gb-live-block[data-block-type="list"] .gb-md-list {
+  margin: 0.08em 0;
+}
+.gb-live-empty-line {
+  min-height: 0.9em;
+  line-height: 0.9;
+  user-select: none;
+}
+.gb-live-active-ta {
+  display: block;
+  width: 100%;
+  min-height: 1.4em;
+  box-sizing: border-box;
+  border: none;
+  border-left: 2px solid var(--accent);
+  padding: 1px 4px 1px 6px;
+  margin: 0 0 0 -8px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent-soft, rgba(98, 100, 167, 0.14)) 55%, transparent);
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  resize: none;
+  outline: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.gb-live-frontmatter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  border: 1px solid var(--stroke);
+  font-size: 0.8em;
+  color: var(--text-2);
+  overflow: hidden;
+}
+.gb-live-fm-badge,
+.gb-obsidian-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gb-md-mode-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--surface-2);
+  border: 1px solid var(--stroke);
+}
+.gb-md-mode-btn {
+  width: auto !important;
+  min-width: 0;
+  height: 24px !important;
+  padding: 0 7px !important;
+  border-radius: 5px !important;
+  font-size: 11px !important;
+  font-weight: 600;
+}
+.gb-md-mode-btn.on,
+.gb-obsidian-bar-btn.on {
+  background: var(--accent) !important;
+  color: #ffffff !important;
+}

@@ -178,3 +178,11 @@ export function download(name, blob) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
+
+export function boardAssetUrl(assetId, prefix = 'asset') {
+  const cleanPrefix = String(prefix || 'asset').replace(/^\/+|\/+$/g, '');
+  const origin = typeof window !== 'undefined' && window.location?.origin && window.location.origin !== 'null'
+    ? window.location.origin
+    : 'app://board';
+  return `${origin}/${cleanPrefix}/${encodeURIComponent(assetId)}`;
+}

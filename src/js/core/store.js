@@ -54,6 +54,7 @@ export function emptyDoc(name = t('Untitled board')) {
     created: Date.now(), modified: Date.now(),
     background: { color: '#ffffff', pattern: 'none', patternColor: '#c8c6c4' },
     pages: [],                     // [] = infinite canvas; [{w,h},…] = a strip of sheets
+    pageClip: false,               // false = freeform unclipped canvas around pages; true = strict sheet clipping
     camera: { x: 0, y: 0, z: 1 },
     objects: {},   // id -> object
     order: [],      // z-order, back to front
@@ -303,6 +304,10 @@ export class Store {
     this.commit(label, [{ t: 'doc', before: { pages: before }, after: { pages: after } }]);
   }
 
+  setPageClip(clip, label = 'page clip') {
+    this.commit(label, [{ t: 'doc', before: { pageClip: this.doc.pageClip === true }, after: { pageClip: !!clip } }]);
+  }
+
   pagesOp(pages) {
     return { t: 'doc', before: { pages: this.doc.pages.map((p) => ({ ...p })) },
       after: { pages: (pages || []).map(cleanPage) } };
@@ -412,6 +417,7 @@ export class Store {
     if (data.origin) d.origin = data.origin;
     d.background = { ...d.background, ...(data.background || {}) };
     d.pages = pagesFrom(data);
+    d.pageClip = data.pageClip === true;
     if (Array.isArray(data.pageDates)) d.pageDates = data.pageDates.map((x) => (typeof x === 'string' && DATE_RE.test(x) ? x : null));
     d.camera = data.camera || d.camera;
     if (Array.isArray(data.audioTracks)) {

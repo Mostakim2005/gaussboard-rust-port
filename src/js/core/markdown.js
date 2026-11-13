@@ -82,7 +82,7 @@ export function stripObsidianComments(markdownText) {
   }).join('\n');
 }
 
-function extractFootnotes(markdownText) {
+export function extractFootnotes(markdownText) {
   const lines = String(markdownText ?? '').split('\n');
   const definitions = new Map();
   let fence = null;
@@ -750,6 +750,132 @@ export function parseMarkdownAST(markdownText) {
 }
 
 /**
+ * Splits normalized Markdown text into contiguous line-indexed blocks covering
+ * every line 0..lines.length-1 with exact character offsets for cursor-line
+ * Obsidian Live Preview.
+ */
+export function splitMarkdownBlocksWithLines(markdownText) {
+  const raw = String(markdownText ?? '').replace(/\r\n?/g, '\n');
+  const lines = raw.split('\n');
+  const lineStarts = new Array(lines.length);
+  let charPos = 0;
+  for (let k = 0; k < lines.length; k++) {
+    lineStarts[k] = charPos;
+    charPos += lines[k].length + 1;
+  }
+
+  const blocks = [];
+  const pushBlock = (type, startLine, endLine, isEmpty = false) => {
+    const startOffset = lineStarts[startLine];
+    const endOffset = lineStarts[endLine] + lines[endLine].length;
+    blocks.push({
+      type,
+      startLine,
+      endLine,
+      startOffset,
+      endOffset,
+      rawText: lines.slice(startLine, endLine + 1).join('\n'),
+      isEmpty
+    });
+  };
+
+  let i = 0;
+  const fmMatch = raw.match(FRONTMATTER_RE);
+  if (fmMatch) {
+    const fmRaw = fmMatch[0].replace(/\n$/, '');
+    const fmLineCount = fmRaw.split('\n').length;
+    pushBlock('frontmatter', 0, Math.min(fmLineCount, lines.length) - 1, false);
+    i = fmLineCount;
+  }
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (/^\s*$/.test(line)) {
+      pushBlock('blank', i, i, true);
+      i++;
+      continue;
+    }
+
+    const fenceMatch = line.match(/^\s*(`{3,}|~{3,})([a-zA-Z0-9_-]*)\s*$/);
+    if (fenceMatch) {
+      const fence = fenceMatch[1];
+      const startLine = i;
+      i++;
+      const closeRe = new RegExp(`^\\s*${fence[0]}{${fence.length},}\\s*$`);
+      while (i < lines.length && !closeRe.test(lines[i])) i++;
+      if (i < lines.length) i++;
+      pushBlock('codeblock', startLine, i - 1, false);
+      continue;
+    }
+
+    if (line.trim().startsWith('$$')) {
+      const startLine = i;
+      if (/^\$\$([\s\S]+?)\$\$$/.test(line.trim())) {
+        pushBlock('mathblock', startLine, startLine, false);
+        i++;
+        continue;
+      }
+      i++;
+      while (i < lines.length && !lines[i].trim().endsWith('$$')) i++;
+      if (i < lines.length) i++;
+      pushBlock('mathblock', startLine, i - 1, false);
+      continue;
+    }
+
+    if (/^\s*(#{1,6})(?:\s+(.*))?$/.test(line)) {
+      pushBlock('heading', i, i, false);
+      i++;
+      continue;
+    }
+
+    if (/^\s*(?:-\s*){3,}$|^\s*(?:\*\s*){3,}$|^\s*(?:_\s*){3,}$/.test(line)) {
+      pushBlock('hr', i, i, false);
+      i++;
+      continue;
+    }
+
+    if (/^\s*>\s?/.test(line)) {
+      const startLine = i;
+      const firstBody = line.replace(/^\s*>\s?/, '');
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) i++;
+      const type = CALLOUT_HEADER_RE.test(firstBody) ? 'callout' : 'blockquote';
+      pushBlock(type, startLine, i - 1, false);
+      continue;
+    }
+
+    if (line.includes('|') && i + 1 < lines.length && parseTableDelimiter(lines[i + 1])) {
+      const startLine = i;
+      i += 2;
+      while (i < lines.length && lines[i].includes('|') && !/^\s*$/.test(lines[i])) i++;
+      pushBlock('table', startLine, i - 1, false);
+      continue;
+    }
+
+    if (TASK_LINE_RE.test(line) || /^([ \t]*)[-*+]\s+(.*)$/.test(line) || /^([ \t]*)(\d+)\.\s+(.*)$/.test(line)) {
+      pushBlock('list', i, i, false);
+      i++;
+      continue;
+    }
+
+    const startLine = i;
+    i++;
+    while (
+      i < lines.length &&
+      !/^\s*$/.test(lines[i]) &&
+      !/^\s*(?:#{1,6}(?:\s|$)|`{3,}|~{3,}|>\s?|[-*+]\s+|\d+\.\s+|\$\$)/.test(lines[i]) &&
+      !/^\s*(?:-\s*){3,}$|^\s*(?:\*\s*){3,}$|^\s*(?:_\s*){3,}$/.test(lines[i]) &&
+      !(lines[i].includes('|') && i + 1 < lines.length && parseTableDelimiter(lines[i + 1]))
+    ) {
+      i++;
+    }
+    pushBlock('paragraph', startLine, i - 1, false);
+  }
+
+  return blocks;
+}
+
+/**
  * Renders parsed Markdown AST into strict XHTML.
  */
 export function renderMarkdownToHtml(markdownText, options = {}) {
@@ -876,7 +1002,8 @@ export function renderMarkdownToHtml(markdownText, options = {}) {
             return `<li data-line="${item.line}">${renderInlineMarkdown(item.text, renderOptions)}</li>`;
           })
           .join('');
-        blocks.push(`<${tag} class="${listCls}" data-line="${node.lineStart}">${lis}</${tag}>`);
+        const startAttr = node.ordered && node.items[0]?.orderNum > 1 ? ` start="${node.items[0].orderNum}"` : '';
+        blocks.push(`<${tag} class="${listCls}" data-line="${node.lineStart}"${startAttr}>${lis}</${tag}>`);
         break;
       }
 

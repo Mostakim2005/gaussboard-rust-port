@@ -136,6 +136,26 @@ jobs:
       - name: Initialize Tauri Android project
         run: npm run tauri android init
 
+      - name: Ensure Android microphone permissions in generated manifest
+        shell: bash
+        run: |
+          MANIFEST="src-tauri/gen/android/app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST" ]; then
+            python3 - <<'PY'
+          from pathlib import Path
+          p = Path("src-tauri/gen/android/app/src/main/AndroidManifest.xml")
+          text = p.read_text(encoding="utf-8")
+          perms = [
+              '    <uses-permission android:name="android.permission.RECORD_AUDIO" />',
+              '    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />',
+          ]
+          missing = [line for line in perms if line.strip() not in text]
+          if missing:
+              text = text.replace("<application", "\n".join(missing) + "\n    <application", 1)
+              p.write_text(text, encoding="utf-8")
+          PY
+          fi
+
       - name: Build Tauri Android APK
         run: npm run tauri android build -- --apk --target aarch64
 

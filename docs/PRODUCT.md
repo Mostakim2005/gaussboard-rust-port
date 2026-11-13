@@ -206,7 +206,27 @@
   * `src-tauri/src/bundle.rs` -> `collect_external_asset_ids`, `export_gaussboard_to_bytes`
   * `src-tauri/src/lan_sync/mod.rs` -> `handle_sync_asset`
 
+### [FEATURE: Obsidian-Live-Preview-And-Vault-Bridge] | Aliases: Live Preview, source mode, reading view, Obsidian vault sync, markdownEditMode
+> **1-Line Summary:** Three-way Markdown editing (`live` cursor-line hybrid preview as default, `source`, and `reading`) paired with a sandboxed bidirectional Obsidian vault `.md` bridge (`vault_choose_folder`, `vault_list_notes`, `vault_read_note`, `vault_write_note`).
+* **User Intention (Non-Negotiable):** Edit Markdown cards with Obsidian-style live rendering where only the active cursor line or block shows raw syntax, switch freely between Live/Source/Reading modes, and link or bi-directionally sync local vault `.md` files with full path-traversal protection.
+* **Code Anchors (Grep Targets):**
+  * `src/js/core/markdown.js` -> `splitMarkdownBlocksWithLines`, `renderMarkdownToHtml`
+  * `src/js/ui/textedit.js` -> `TextEditor`, `setMarkdownMode`, `renderLiveHybridDom`, `runToolbarAction`
+  * `src/js/ui/contextmenu.js` -> `formatBar`, `openObsidianLinkPopover`, `updateSelectionBar`
+  * `src/js/ui/panels.js` -> `settings`
+  * `src/js/app.js` -> `chooseObsidianVault`, `syncObjectFromObsidian`, `pushObjectToObsidian`, `insertObsidianVaultNote`
+  * `src-tauri/src/vault.rs` -> `vault_choose_folder`, `vault_list_notes`, `vault_read_note`, `vault_write_note`
 
+### [FEATURE: Freeform-Canvas-And-UI-Reliability-Upgrades] | Aliases: unclipped pages, proportional crop, study tape width, excerpt backlinks, video bookmarks, HTTPS mic
+> **1-Line Summary:** Freeform unclipped canvas with pages (`doc.pageClip = false` default), proportional non-destructive image crop recovery, tinted revealed study tape, Windows/Android secure-context microphone access, PNG excerpt clipboard round-trips, non-blocking boards index, and inline chronological YouTube bookmarks.
+* **User Intention (Non-Negotiable):** Allow freeform drawing and object placement across page borders unless opt-in clipping is enabled, preserve full uncropped image geometry during crop drags, enable instant bidirectional jumps between excerpt sources and copies, eliminate native `window.prompt` stalls in video bookmarking, and guarantee microphone access on Windows WebView2 and Android.
+* **Code Anchors (Grep Targets):**
+  * `src/js/core/store.js`, `src/js/core/surface.js`, `src/js/core/tools.js` -> `doc.pageClip`, `setPageClip`, `readingTap`, `onDoubleClick`
+  * `src/js/ui/contextmenu.js` -> `startImageCrop`, `updateCanvasMenu`
+  * `src/js/ui/toolbar.js`, `src/js/core/render.js`, `src/js/app.js` -> `tapeWidthRow`, `drawCurtain`, `toggleCurtain`
+  * `src/js/ui/video-dialog.js` -> `sortBookmarks`, `parseVideoUrl`, `VideoDialog`
+  * `src/js/ui/split-workspace.js` -> `refreshBoardList`, `scrollLeftToRef`, `renderExcerptsDock`
+  * `src-tauri/src/clipboard.rs`, `src-tauri/src/storage.rs`, `src-tauri/src/lib.rs`, `src-tauri/tauri.conf.json` -> `clipboard_read`, `clipboard_write`, `boards_list_blocking`, `configure_webview2_permissions`, `useHttpsScheme`
 
 ## 3. Planned Features & App-Merge Wishlist
 
@@ -223,7 +243,7 @@
 ## 4. Canonical References & Live Verification
 * **Core Documentation Suite:** `docs/PRODUCT.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS_AND_TRAPS.md`, `docs/releases/ANDROID_READINESS.md`
 * **Active Verification Suite:** `node scripts/smoke.js` (25/25 passing)
-* **Internationalization Suite:** `node scripts/i18n-check.js` (2,383/2,383 across 7 locales)
+* **Internationalization Suite:** `node scripts/i18n-check.js` (2,449/2,449 across 7 locales)
 * **Android Platform Suite:** `node --test test/android-*.test.js` (82/82 passing)
 * **Tauri 2 Rust Native Port:** `src-tauri/` (Tauri 2.1 native host with custom `app://board/` protocol, crash-safe `<id>.json` storage, SHA-256 assets, Axum sync, Windows portable/NSIS/MSI, and v2/v3 signed Android ARM64 APK via `tauri-android` workflow)
 * **Core Data Schemas & State:** `src/js/core/store.js` (`Store`, `doc.objects`, `doc.pages`, `doc.audioTracks`)

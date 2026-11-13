@@ -516,22 +516,26 @@ export class Surface {
     // to keep - they stay visible on the desk rather than vanishing, which is
     // the whole point of having asked.
     const rects = pageRects(pages);
-    const buckets = rects.map(() => []);
-    const loose = [];
-    for (const o of visible) {
-      const i = pageIndexForBoxIn(rects, boundsOf(o));
-      if (i >= 0) buckets[i].push(o); else loose.push(o);
-    }
-    for (const o of loose) drawObject(ctx, o, onload, this.editing);
-    for (let i = 0; i < rects.length; i++) {
-      if (!buckets[i].length) continue;
-      const r = rects[i];
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(r.x, r.y, r.w, r.h);
-      ctx.clip();
-      for (const o of buckets[i]) drawObject(ctx, o, onload, this.editing);
-      ctx.restore();
+    if (this.store.doc.pageClip === true && rects.length) {
+      const buckets = rects.map(() => []);
+      const loose = [];
+      for (const o of visible) {
+        const i = pageIndexForBoxIn(rects, boundsOf(o));
+        if (i >= 0) buckets[i].push(o); else loose.push(o);
+      }
+      for (const o of loose) drawObject(ctx, o, onload, this.editing);
+      for (let i = 0; i < rects.length; i++) {
+        if (!buckets[i].length) continue;
+        const r = rects[i];
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(r.x, r.y, r.w, r.h);
+        ctx.clip();
+        for (const o of buckets[i]) drawObject(ctx, o, onload, this.editing);
+        ctx.restore();
+      }
+    } else {
+      for (const o of visible) drawObject(ctx, o, onload, this.editing);
     }
     // Page margins are a visual writing-area guide. They stay on the screen
     // canvas and are deliberately omitted by renderTo(), so they do not get
@@ -1341,6 +1345,7 @@ export class Surface {
    * panning; it only refuses to let the last of the paper leave.
    */
   clampCamera() {
+    if (this.store.doc.pageClip !== true) return;
     const pages = this.store.doc.pages;
     if (!pages.length || !this.width || !this.height) return;
     const b = stripBounds(pages);
@@ -1404,7 +1409,7 @@ export class Surface {
     }
     ctx.setTransform(scale, 0, 0, scale, -box.x * scale, -box.y * scale);
     const pages = this.store.doc.pages;
-    const rects = pageRects(pages);
+    const rects = this.store.doc.pageClip === true ? pageRects(pages) : [];
     for (const o of this.store.objects) {
       if (!o) continue;
       if (!boxesIntersect(box, worldBounds(o))) continue;

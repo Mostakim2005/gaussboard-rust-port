@@ -5,6 +5,7 @@ import { Surface } from './core/surface.js';
 import { t } from './i18n.js';
 import { isDarkBoard } from './core/render.js';
 import { boundsOf } from './core/store.js';
+import { boardAssetUrl } from './core/util.js';
 import { stripBounds } from './core/pages.js';
 import { replayDisplayMode, replayGhostMode, replaySceneFilter, replayStrokesForTrack } from './core/replay-clock.js';
 import { h } from './ui/popover.js';
@@ -199,7 +200,7 @@ export class VideoExporter {
 
     // Audio element
     const audio = new Audio();
-    audio.src = `app://board/asset/${track.assetId}`;
+    audio.src = boardAssetUrl(track.assetId);
     audio.crossOrigin = 'anonymous';
     let audioCtx = null;
     let source = null;
@@ -454,7 +455,7 @@ export class VideoExporter {
 
       const audio = new Audio();
       activeAudio = audio;
-      audio.src = `app://board/asset/${track.assetId}`;
+      audio.src = boardAssetUrl(track.assetId);
       audio.crossOrigin = 'anonymous';
 
       await waitForAudioReady(audio);

@@ -16,6 +16,7 @@ import * as F from '../core/folders.js';
 import * as Recent from '../core/recent.js';
 import { scoreBoard } from './boardpicker.js';
 import { createLaserDurationSlider } from './toolbar.js';
+import { openObsidianLinkPopover } from './contextmenu.js';
 
 /**
  * How a paired computer that is NOT currently visible should be shown.
@@ -454,9 +455,27 @@ export function createPanels(app) {
           t('Exports cover the sheet, so anything outside it is left out.')));
       }
 
+      let clipRow = null;
+      if (page) {
+        const clipBox = h('input', { type: 'checkbox', 'data-page-clip': '1' });
+        clipBox.checked = app.store.doc.pageClip === true;
+        clipBox.addEventListener('change', () => {
+          app.store.setPageClip(clipBox.checked);
+          app.surface.clampCamera();
+          app.surface.invalidate();
+          rerender(); refresh();
+        });
+        const clipLabel = h('span', { style: 'cursor:pointer' }, t('Clip & confine content inside pages'));
+        clipLabel.addEventListener('click', () => { clipBox.checked = !clipBox.checked; clipBox.dispatchEvent(new Event('change')); });
+        clipRow = h('div', { style: 'margin-top:10px' },
+          h('div', { style: 'display:flex;align-items:center;gap:10px' }, h('label', { class: 'toggle' }, clipBox), clipLabel));
+      }
+
       const sizeNote = h('p', { style: 'margin:8px 0 0;font-size:12px;color:var(--text-2);line-height:1.6' },
         page
-          ? t('Anything you draw outside the sheet stays where it is — it just sits off the page, and exports use the sheet.')
+          ? (app.store.doc.pageClip === true
+            ? t('Strict sheet mode is on: strokes and objects stay confined and clipped inside each page.')
+            : t('Freeform canvas with pages: draw, pan and place items across page borders or anywhere beside the pages.'))
           : t('The canvas has no edges. Pick a size to work on a fixed sheet instead.'));
 
       const remembering = app.settings.rememberCanvas === true;
@@ -491,7 +510,7 @@ export function createPanels(app) {
       );
 
       return h('div', {},
-        h('div', { class: 'section' }, h('h5', {}, t('Canvas size')), sizeRow, orientRow, btnMarginAdjust, fitRow, sizeNote),
+        h('div', { class: 'section' }, h('h5', {}, t('Canvas size')), sizeRow, orientRow, btnMarginAdjust, clipRow, fitRow, sizeNote),
         h('div', { class: 'section' }, h('h5', {}, t('Colour')), colors),
         h('div', { class: 'section' }, h('h5', {}, t('Custom colour')), custom),
         h('div', { class: 'section' }, h('h5', {}, t('Pattern')), pats),
@@ -1751,6 +1770,45 @@ export function createPanels(app) {
               rerender();
             }),
             t('New text boxes start in Markdown mode with Obsidian card styling, tags, and wikilink parsing.')),
+          row(t('Default Markdown editor mode'),
+            mkChoice([
+              ['live', t('Live preview')],
+              ['source', t('Source')],
+              ['reading', t('Reading')]
+            ], () => s.markdownEditMode || 'live', (v) => {
+              s.markdownEditMode = v;
+              app.saveSettings();
+              rerender();
+            }),
+            t('Obsidian-style Live Preview shows raw Markdown on the active line or block while rendering surrounding content.')),
+          ...(window.board?.vault ? [row(t('Obsidian vault folder'), (() => {
+            const box = h('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;' });
+            const status = h('span', { class: 'gb-obsidian-badge' },
+              s.obsidianVaultPath ? (s.obsidianVaultName || s.obsidianVaultPath) : t('Not connected')
+            );
+            const chooseBtn = h('button', { type: 'button', class: 'tool-sm' },
+              s.obsidianVaultPath ? t('Change vault…') : t('Choose vault…')
+            );
+            chooseBtn.addEventListener('click', async () => {
+              await app.chooseObsidianVault();
+              rerender();
+            });
+            box.append(status, chooseBtn);
+            if (s.obsidianVaultPath) {
+              const insertBtn = h('button', { type: 'button', class: 'tool-sm' }, t('Insert .md note…'));
+              insertBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openObsidianLinkPopover(app, insertBtn, null, { insertMode: true });
+              });
+              const discBtn = h('button', { type: 'button', class: 'tool-sm' }, t('Disconnect'));
+              discBtn.addEventListener('click', () => {
+                app.disconnectObsidianVault();
+                rerender();
+              });
+              box.append(insertBtn, discBtn);
+            }
+            return box;
+          })(), t('Connect a local Obsidian vault folder to insert and bi-directionally sync .md notes.'))] : []),
           row(t('Default markdown card style'),
             mkChoice([
               ['canvas', t('Canvas')],
@@ -2204,6 +2262,65 @@ export function createPanels(app) {
     return h('section', { class: 'recent', 'aria-label': t('Recent') }, h('div', { class: 'recent-title' }, t('Recent')), row);
   }
 
+  async function fetchBoardsSafely() {
+    let raw = null;
+    let loadError = null;
+    try {
+      const listPromise = Promise.resolve(window.board?.boards?.list?.() || []);
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Board list timed out')), 6000)
+      );
+      raw = await Promise.race([listPromise, timeoutPromise]);
+    } catch (err) {
+      loadError = err;
+      raw = [];
+    }
+    const all = Array.isArray(raw) ? raw.filter((b) => b && b.id) : [];
+    const seen = new Set(all.map((b) => b.id));
+    if (app.tabBar && Array.isArray(app.tabBar.tabs)) {
+      for (const tab of app.tabBar.tabs) {
+        if (!tab?.id || seen.has(tab.id)) continue;
+        const snap = app.tabBar.cache?.get?.(tab.id)?.docSnapshot;
+        const objCount = snap
+          ? (Array.isArray(snap.objects) ? snap.objects.length : Object.keys(snap.objects || {}).length)
+          : 0;
+        all.unshift({
+          id: tab.id,
+          name: snap?.name || tab.title || t('Untitled board'),
+          objects: objCount,
+          modified: snap?.modified || Date.now(),
+          tags: snap?.tags || snap?.properties?.tags || []
+        });
+        seen.add(tab.id);
+      }
+    }
+    if (app.store?.doc?.id && !seen.has(app.store.doc.id)) {
+      all.unshift({
+        id: app.store.doc.id,
+        name: app.store.doc.name,
+        objects: app.store.count,
+        modified: app.store.doc.modified || Date.now(),
+        tags: app.store.doc.tags || app.store.doc.properties?.tags || []
+      });
+    }
+    return { all, loadError };
+  }
+
+  function renderBoardsLoadError(host, err, retryFn) {
+    if (!host) return;
+    host.innerHTML = '';
+    host.className = '';
+    host.appendChild(h('div', {
+      style: 'padding:20px;border:1px solid var(--stroke);border-radius:10px;background:var(--surface);max-width:460px;display:flex;flex-direction:column;gap:10px;'
+    },
+      h('b', { style: 'font-size:14px;' }, t('Could not load saved boards')),
+      h('p', { style: 'margin:0;color:var(--text-2);font-size:12.5px;' }, String(err?.message || err || t('Unknown error'))),
+      h('div', { style: 'display:flex;gap:8px;' },
+        h('button', { class: 'btn primary', onclick: retryFn }, t('Retry'))
+      )
+    ));
+  }
+
   const activeTagFilters = new Set();
   async function boardsGallery(opts = {}) {
     // Re-drawing in place (after a move, a new folder, a step into a folder)
@@ -2213,32 +2330,31 @@ export function createPanels(app) {
     if (!(currentKey === 'boards' && document.getElementById('boardList'))) {
       searchWords = '';          // a fresh look at My boards starts with no search
       if (!opts.stay) activeTagFilters.clear();
-      open('boards', t('My boards'), () => h('div', { id: 'boardList' }, h('p', { style: 'color:var(--text-2)' }, t('Loading…'))));
+      open('boards', t('My boards'), () => h('div', { id: 'boardList' }, h('p', { style: 'color:var(--text-2);margin:0;' }, t('Loading…'))));
     }
-    const all = await window.board.boards.list();
-    if (!all.some((b) => b.id === app.store.doc.id)) all.unshift({
-      id: app.store.doc.id, name: app.store.doc.name, objects: app.store.count, modified: app.store.doc.modified,
-      tags: app.store.doc.tags || app.store.doc.properties?.tags || []
-    });
-    // The board in front is shown as it is right now, not as it was at its last save.
-    for (const b of all) if (b.id === app.store.doc.id) {
-      b.thumb = app.boardPictureFor?.() || b.thumb || null;
-      b.tags = app.store.doc.tags || app.store.doc.properties?.tags || b.tags || [];
-    }
-    const host = document.getElementById('boardList');
-    if (!host) return;
-    // only in the usual folder, once that is known: while another is in use, boards filed from there are not "gone"
-    if (app.storageElsewhere === false && F.pruneBoards(app.settings, all)) app.saveSettings();
-    const here = app.boardFolder && F.folderPath(app.settings, app.boardFolder).length ? app.boardFolder : null;
-    app.boardFolder = here;
-    let list = F.boardsIn(app.settings, all, here);
-    if (activeTagFilters.size > 0) {
-      list = list.filter((b) => Array.isArray(b.tags) && [...activeTagFilters].every((t) => b.tags.includes(t)));
-    }
-    const go = (id) => { app.boardFolder = id || null; boards({ stay: true }); };
-    // the folder copy beside the boards (folders.json) follows too: a chosen boards folder, a second
-    // computer on it and the phone's safe copy all read their folders from there
-    const keep = () => { try { localStorage.setItem('gazboard.settings', JSON.stringify(app.settings)); } catch { /* storage refused */ } app.syncBoardPath?.(); app.queueCatalogue?.(); };
+    try {
+      const { all, loadError } = await fetchBoardsSafely();
+      // The board in front is shown as it is right now, not as it was at its last save.
+      for (const b of all) if (b.id === app.store.doc.id) {
+        b.thumb = app.boardPictureFor?.() || b.thumb || null;
+        b.tags = app.store.doc.tags || app.store.doc.properties?.tags || b.tags || [];
+      }
+      const host = document.getElementById('boardList');
+      if (!host) return;
+      if (loadError && all.length === 0) {
+        renderBoardsLoadError(host, loadError, () => boardsGallery({ ...opts, stay: true }));
+        return;
+      }
+      // only in the usual folder, once that is known: while another is in use, boards filed from there are not "gone"
+      if (!loadError && app.storageElsewhere === false && F.pruneBoards(app.settings, all)) app.saveSettings();
+      const here = app.boardFolder && F.folderPath(app.settings, app.boardFolder).length ? app.boardFolder : null;
+      app.boardFolder = here;
+      let list = F.boardsIn(app.settings, all, here);
+      if (activeTagFilters.size > 0) {
+        list = list.filter((b) => Array.isArray(b.tags) && [...activeTagFilters].every((t) => b.tags.includes(t)));
+      }
+      const go = (id) => { app.boardFolder = id || null; boards({ stay: true }); };
+      const keep = () => { try { localStorage.setItem('gazboard.settings', JSON.stringify(app.settings)); } catch { /* storage refused */ } app.syncBoardPath?.(); app.queueCatalogue?.(); };
 
     /*
      * The page: a list of folders down the side (on a screen wide enough for
@@ -2745,6 +2861,9 @@ export function createPanels(app) {
         app.showOverlay(() => done(undefined));
       });
     }
+    } catch (err) {
+      renderBoardsLoadError(document.getElementById('boardList'), err, () => boardsGallery({ ...opts, stay: true }));
+    }
   }
 
   async function boardsList(opts = {}) {
@@ -2752,16 +2871,17 @@ export function createPanels(app) {
     // must not go through open(), which treats a second open as "close".
     if (!(opts && opts.stay && currentKey === 'boards' && document.getElementById('boardList'))) {
       searchWords = '';          // a fresh look at My boards starts with no search
-      open('boards', t('My boards'), () => h('div', { id: 'boardList' }, h('p', { style: 'color:var(--text-2)' }, t('Loading…'))));
+      open('boards', t('My boards'), () => h('div', { id: 'boardList' }, h('p', { style: 'color:var(--text-2);margin:0;' }, t('Loading…'))));
     }
-    const all = await window.board.boards.list();
-    if (!all.some((b) => b.id === app.store.doc.id)) all.unshift({
-      id: app.store.doc.id, name: app.store.doc.name, objects: app.store.count, modified: app.store.doc.modified
-    });
+    const { all, loadError } = await fetchBoardsSafely();
     const host = document.getElementById('boardList');
     if (!host) return;
+    if (loadError && all.length === 0) {
+      renderBoardsLoadError(host, loadError, () => boardsList({ ...opts, stay: true }));
+      return;
+    }
     // only in the usual folder, once that is known: while another is in use, boards filed from there are not "gone"
-    if (app.storageElsewhere === false && F.pruneBoards(app.settings, all)) app.saveSettings();
+    if (!loadError && app.storageElsewhere === false && F.pruneBoards(app.settings, all)) app.saveSettings();
     const here = app.boardFolder && F.folderPath(app.settings, app.boardFolder).length ? app.boardFolder : null;
     app.boardFolder = here;
     const list = F.boardsIn(app.settings, all, here);

@@ -221,9 +221,7 @@ export function choosePages(app, doc) {
       importBtn.toggleAttribute('disabled', pages.length === 0);
       importBtn.textContent = pages.length ? (pages.length === 1 ? t('Import {n} page', { n: pages.length }) : t('Import {n} pages', { n: pages.length })) : t('Import');
       const q = QUALITY.find((x) => x.id === quality) || QUALITY[2];
-      // rough: an A4 page as PNG or compact JPEG, times the page count
-      const mb = pages.length * (q.id <= 0.75 ? 0.04 : q.id <= 1.0 ? 0.07 : (q.dpi / 144) ** 2 * 0.9);
-      sizeHint.textContent = pages.length ? t('{dpi} dpi · about {mb} MB on the board', { dpi: q.dpi, mb: mb < 1 ? '<1' : Math.round(mb) }) : '';
+      sizeHint.textContent = pages.length ? t('Virtualized vector PDF · instant stream at any zoom ({n} pages)', { n: pages.length }) : '';
       for (const [n, { tile }] of tiles) tile.classList.toggle('on', chosen.has(n));
     }
     rangeInput.addEventListener('input', () => {

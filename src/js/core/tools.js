@@ -850,7 +850,7 @@ export class Interaction {
         // The pen leaving the paper does not end the stroke - the points that
         // land off the sheet are simply not picked up, and drawing resumes if
         // it comes back on, exactly as ink behaves at the edge of a page.
-        const keep = (q) => !a.sheet || inRect(a.sheet, q.x, q.y);
+        const keep = (q) => !a.sheet || !this.strictPageMode || inRect(a.sheet, q.x, q.y);
         let added = false;
 
         /*
@@ -1056,7 +1056,7 @@ export class Interaction {
         if (Math.abs(sx) < 0.02) sx = 0.02 * Math.sign(sx || 1);
         if (Math.abs(sy) < 0.02) sy = 0.02 * Math.sign(sy || 1);
 
-        if (this.pages?.length) {
+        if (this.strictPageMode && this.pages?.length) {
           const rects = pageRects(this.pages);
           let pIdx = pageIndexForBox(this.pages, a.box);
           if (pIdx < 0) pIdx = nearestPageIndex(this.pages, a.box.x + a.box.w / 2, a.box.y + a.box.h / 2);
@@ -1929,6 +1929,7 @@ export class Interaction {
    *  it, however the gesture arrives.
    * ------------------------------------------------------------ */
   get pages() { return this.store.doc.pages; }
+  get strictPageMode() { return this.store.doc.pageClip === true; }
 
   /** The sheet under a world point. Null on an infinite board or in a gutter. */
   sheetAt(wp) {
@@ -1938,10 +1939,10 @@ export class Interaction {
     return i < 0 ? null : pageRects(pages)[i];
   }
 
-  /** False only when the board has sheets and this point misses all of them. */
-  onPaper(wp) { return !this.pages.length || pageIndexAt(this.pages, wp.x, wp.y) >= 0; }
+  /** False only when strict page confinement is enabled and this point misses all sheets. */
+  onPaper(wp) { return !this.strictPageMode || !this.pages.length || pageIndexAt(this.pages, wp.x, wp.y) >= 0; }
 
-  /** Nudge one new object onto the sheet it was dropped nearest. */
+  /** Nudge one new object onto the sheet it was dropped nearest when strict page confinement is enabled. */
   placeOnPaper(obj) { this.clampGroupToPaper([obj]); return obj; }
 
   /**
@@ -1951,7 +1952,7 @@ export class Interaction {
    */
   clampGroupToPaper(objs) {
     const pages = this.pages;
-    if (!pages.length || !objs || !objs.length) return;
+    if (!this.strictPageMode || !pages.length || !objs || !objs.length) return;
     const rects = pageRects(pages);
     let b = null;
     for (const o of objs) b = unionBox(b, boundsOf(o));
@@ -1987,7 +1988,7 @@ export class Interaction {
     const o = a.obj;
     if (o.tool !== 'pen' || (o.effect && o.effect !== 'none')) return false;
     if (a.ruled || a.blocked || this.ruler.visible) return false;
-    if (a.sheet && !inRect(a.sheet, wp.x, wp.y)) return false;
+    if (this.strictPageMode && a.sheet && !inRect(a.sheet, wp.x, wp.y)) return false;
     const weight = this.app.settings.pressure ? 0.55 + clamp(pressure, 0, 1) * 0.9 : 1;
     return trail.update(e, inkPaint(o.color), (o.width || 4) * weight * this.surface.cam.z);
   }
@@ -2056,7 +2057,7 @@ export class Interaction {
     };
     // starting in the gutter is drawing on the desk: nothing happens
     const sheet = this.sheetAt(wp);
-    if (this.pages.length && !sheet) return;
+    if (this.strictPageMode && this.pages.length && !sheet) return;
     // Whether this stroke is a RULED one is decided here, once, by where it
     // starts - and so is which of the ruler's two edges it belongs to. See
     // snapToRuler() for why that cannot be left to the points as they arrive.
@@ -2246,6 +2247,10 @@ export class Interaction {
     }
     if (hit.type === 'video') {
       this.app.openVideoPlayer?.(hit);
+      return;
+    }
+    if (hit.type === 'image' && hit.excerptSource?.boardId) {
+      this.app.openExcerptSource?.(hit);
       return;
     }
     const replay = this.app.replayEngine;
@@ -3385,6 +3390,10 @@ export class Interaction {
     }
     if (hit.type === 'video') {
       this.app.openVideoPlayer?.(hit);
+      return;
+    }
+    if (hit.type === 'image' && hit.excerptSource?.boardId) {
+      this.app.openExcerptSource?.(hit);
       return;
     }
     // only the picking tools own selection chrome

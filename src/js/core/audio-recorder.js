@@ -1,4 +1,5 @@
 import { HardwareAudioClock } from './audio-clock.js';
+import { t } from '../i18n.js';
 
 export class AudioRecorder {
   constructor({ onTimeUpdate = null, onLevelUpdate = null, onStateChange = null } = {}) {
@@ -31,9 +32,22 @@ export class AudioRecorder {
     if (this.state !== 'idle' || this._starting) return;
     this._starting = true;
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-      });
+      if (!navigator?.mediaDevices?.getUserMedia) {
+        throw new Error(t('Microphone requires a secure context and OS permission.'));
+      }
+      try {
+        this.stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
+      } catch (mediaErr) {
+        if (mediaErr?.name === 'NotFoundError' || mediaErr?.name === 'DevicesNotFoundError') {
+          throw new Error(t('No microphone was found on this device.'));
+        }
+        if (mediaErr?.name === 'NotAllowedError' || mediaErr?.name === 'PermissionDeniedError') {
+          throw new Error(t('Microphone is busy or blocked by your system privacy settings.'));
+        }
+        throw mediaErr;
+      }
 
       this.sessionId = 'rec_' + Date.now();
       this.activeTrackId = 'aud_' + Date.now();

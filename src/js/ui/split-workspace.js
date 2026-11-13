@@ -5,12 +5,14 @@ import { h } from './popover.js';
 import { Surface } from '../core/surface.js';
 import { Store, boundsOf } from '../core/store.js';
 import { EXCERPT_MIME } from '../core/excerpts.js';
+import { pageRects } from '../core/pages.js';
 import { Interaction } from '../core/tools.js';
 import { PropertiesDialog } from './properties-dialog.js';
 import { TextEditor } from './textedit.js';
 import { icon } from './icons.js';
 import { uid } from '../core/util.js';
 import { t } from '../i18n.js';
+import { TabBar } from './tabs.js';
 
 export class SplitWorkspace {
   /**
@@ -128,16 +130,23 @@ export class SplitWorkspace {
 
     if (!leftBoardData && leftBoardId) {
       try {
-        let loaded = null;
-        if (typeof window.board?.boards?.load === 'function') {
-          loaded = await window.board.boards.load(leftBoardId);
-        } else if (typeof window.board?.boards?.get === 'function') {
-          loaded = await window.board.boards.get(leftBoardId);
-        } else if (this.app?.storage?.load) {
-          loaded = await this.app.storage.load(leftBoardId);
+        const cachedEntry = this.boardList?.find((b) => b.id === leftBoardId)?.cachedDoc
+          || this._cachedTabPayload(leftBoardId);
+        let loaded = cachedEntry ? structuredClone(cachedEntry) : null;
+        if (!loaded) {
+          if (typeof window.board?.boards?.load === 'function') {
+            loaded = await window.board.boards.load(leftBoardId);
+          } else if (typeof window.board?.boards?.get === 'function') {
+            loaded = await window.board.boards.get(leftBoardId);
+          } else if (this.app?.storage?.load) {
+            loaded = await this.app.storage.load(leftBoardId);
+          }
         }
         if (typeof loaded === 'string') {
           try { loaded = JSON.parse(loaded); } catch {}
+        }
+        if (!loaded && cachedEntry === undefined) {
+          loaded = { id: leftBoardId, name: this.boardList?.find((b) => b.id === leftBoardId)?.name || t('Untitled board'), objects: [] };
         }
         if (loaded) {
           if (!loaded.name && loaded.title) loaded.name = loaded.title;
@@ -690,7 +699,7 @@ export class SplitWorkspace {
       excerpts.forEach((ex, idx) => {
         const thumb = h('div', {
           style: 'flex-shrink:0;height:70px;width:90px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;padding:2px;',
-          title: t('Click to drop excerpt onto active board')
+          title: t('Click to drop excerpt onto active board · Double-click to open source')
         },
           ex.src ? h('img', { src: ex.src, style: 'max-width:100%;max-height:50px;object-fit:contain;' }) : h('span', {}, '🖼️'),
           h('span', { style: 'font-size:10px;color:rgba(255,255,255,0.7);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%;text-align:center;' }, ex.excerptSource?.boardName || `Excerpt ${idx + 1}`)
@@ -707,9 +716,14 @@ export class SplitWorkspace {
             newObj.x = center.x - (newObj.w || 200) / 2;
             newObj.y = center.y - (newObj.h || 150) / 2;
             this.app.store?.add(newObj, 'paste_excerpt');
+            this.app.recordExcerptBacklink?.(newObj, this.app.store);
             this.app.surface?.damageAll();
             this.app.toast?.(t('Excerpt stamped onto canvas'));
           }
+        });
+        thumb.addEventListener('dblclick', (ev) => {
+          ev.stopPropagation();
+          this.app?.openExcerptSource?.(ex);
         });
         dockScroll.appendChild(thumb);
       });
@@ -739,6 +753,9 @@ export class SplitWorkspace {
     const center = { x: view.x + view.w / 2, y: view.y + view.h / 2 };
     const copies = this.app.cloneBatch(clipboard, center.x - (box.x + box.w / 2), center.y - (box.y + box.h / 2));
     this.leftStore.addMany(copies, 'paste');
+    for (const copy of copies) {
+      if (copy.excerptSource?.boardId) this.app?.recordExcerptBacklink?.(copy, this.leftStore);
+    }
     this.leftSurface.selection.clear();
     for (const copy of copies) this.leftSurface.selection.add(copy.id);
     this.leftSurface.invalidate();
@@ -896,18 +913,72 @@ export class SplitWorkspace {
     if (this.pickerDropdown) this.pickerDropdown.style.display = 'none';
   }
 
+  _cachedTabPayload(tabId) {
+    if (!tabId) return null;
+    const snap = this.app?.tabBar?.cache?.get?.(tabId)?.docSnapshot;
+    return snap ? TabBar.docToPayload(snap) : null;
+  }
+
+  _openTabEntries() {
+    const entries = [];
+    const tabs = this.app?.tabBar?.tabs;
+    const doc = this.app?.store?.doc;
+    if (!Array.isArray(tabs)) return entries;
+    for (const tab of tabs) {
+      if (!tab?.id) continue;
+      if (doc && tab.id === doc.id) {
+        entries.push({
+          id: doc.id,
+          name: doc.name || tab.title || t('Untitled board'),
+          objects: Object.keys(doc.objects || {}).length,
+          modified: doc.modified || Date.now(),
+          fromTab: true
+        });
+        continue;
+      }
+      const payload = this._cachedTabPayload(tab.id);
+      entries.push({
+        id: tab.id,
+        name: payload?.name || tab.title || t('Untitled board'),
+        objects: Array.isArray(payload?.objects) ? payload.objects.length : 0,
+        modified: payload?.modified || Date.now(),
+        fromTab: true,
+        cachedDoc: payload
+      });
+    }
+    return entries;
+  }
+
   async refreshBoardList() {
+    let saved = [];
     try {
       if (window.board?.boards?.list) {
-        this.boardList = await window.board.boards.list() || [];
+        saved = await window.board.boards.list() || [];
       } else if (this.app?.storage?.list) {
-        this.boardList = await this.app.storage.list() || [];
-      } else {
-        this.boardList = [];
+        saved = await this.app.storage.list() || [];
       }
     } catch {
-      this.boardList = [];
+      saved = [];
     }
+    const merged = [];
+    const byId = new Map();
+    for (const tabEntry of this._openTabEntries()) {
+      byId.set(tabEntry.id, tabEntry);
+      merged.push(tabEntry);
+    }
+    for (const b of (Array.isArray(saved) ? saved : [])) {
+      if (!b?.id) continue;
+      if (byId.has(b.id)) {
+        const existing = byId.get(b.id);
+        existing.thumb = existing.thumb || b.thumb;
+        existing.tags = existing.tags || b.tags;
+        existing.aliases = existing.aliases || b.aliases;
+      } else {
+        byId.set(b.id, b);
+        merged.push(b);
+      }
+    }
+    this.boardList = merged;
   }
 
   renderPickerList(query = '') {
@@ -1026,13 +1097,19 @@ export class SplitWorkspace {
       // Switching boards must not swallow the last few hundred ms of ink on
       // the board being replaced: its save is debounced, so flush it first.
       await this.flushLeftBoard();
-      let data = null;
-      if (typeof window.board?.boards?.load === 'function') {
-        data = await window.board.boards.load(id);
-      } else if (typeof window.board?.boards?.get === 'function') {
-        data = await window.board.boards.get(id);
-      } else if (this.app?.storage?.load) {
-        data = await this.app.storage.load(id);
+      let data = this._cachedTabPayload(id) || this.boardList?.find((b) => b.id === id)?.cachedDoc || null;
+      if (data) data = structuredClone(data);
+      if (!data) {
+        if (typeof window.board?.boards?.load === 'function') {
+          data = await window.board.boards.load(id);
+        } else if (typeof window.board?.boards?.get === 'function') {
+          data = await window.board.boards.get(id);
+        } else if (this.app?.storage?.load) {
+          data = await this.app.storage.load(id);
+        }
+      }
+      if (!data && this.boardList?.some((b) => b.id === id && b.fromTab)) {
+        data = { id, name: this.boardList.find((b) => b.id === id)?.name || t('Untitled board'), objects: [] };
       }
       if (typeof data === 'string') {
         try { data = JSON.parse(data); } catch {}
@@ -1084,10 +1161,36 @@ export class SplitWorkspace {
     if (!this.enabled || !this.leftStore) return false;
     if (id === this.leftBoardId) {
       this.leftSurface?.repaintAll();
+      if (ref && typeof ref === 'object') this.scrollLeftToRef(ref);
       return true;
     }
     await this.loadLeftBoard(id);
+    if (this.leftBoardId === id && ref && typeof ref === 'object') {
+      requestAnimationFrame(() => this.scrollLeftToRef(ref));
+    }
     return this.leftBoardId === id;
+  }
+
+  scrollLeftToRef(ref) {
+    if (!ref || !this.leftSurface?.cam || !this.leftStore?.doc) return false;
+    const sf = this.leftSurface;
+    if (ref.box && sf.width && sf.height) {
+      sf.cam.glideTo(ref.box, sf.width, sf.height, { duration: 400 });
+      sf.invalidate();
+      return true;
+    }
+    if (ref.page > 0 && Array.isArray(this.leftStore.doc.pages) && this.leftStore.doc.pages.length) {
+      const rects = pageRects(this.leftStore.doc.pages);
+      const idx = Math.max(0, Math.min(rects.length - 1, (ref.page | 0) - 1));
+      const r = rects[idx];
+      if (r && sf.width && sf.height) {
+        sf.cam.fit({ x: r.x - 40, y: r.y - 40, w: r.w + 80, h: r.h + 80 }, sf.width, sf.height);
+        sf.clampCamera();
+        sf.invalidate();
+        return true;
+      }
+    }
+    return false;
   }
 
   async createNewStudyBoard(title) {

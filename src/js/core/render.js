@@ -1358,15 +1358,26 @@ export function drawCurtain(ctx, o) {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     if (o.revealed) {
+      ctx.save();
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
       for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      const dark = isDarkBoard();
+      const tint = o.color || '#a855f7';
+      ctx.globalCompositeOperation = dark ? 'screen' : 'multiply';
+      ctx.globalAlpha = dark ? 0.22 : 0.26;
       ctx.lineWidth = w;
-      ctx.strokeStyle = 'rgba(168, 85, 247, 0.4)';
+      ctx.strokeStyle = tint;
       ctx.stroke();
-      ctx.lineWidth = w + 2;
-      ctx.strokeStyle = 'rgba(192, 132, 252, 0.55)';
+
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 0.55;
+      const outlineZoom = Math.max(_activeRenderCamZ || 1, 0.25);
+      ctx.setLineDash([4 / outlineZoom, 3 / outlineZoom]);
+      ctx.lineWidth = 1.25 / outlineZoom;
+      ctx.strokeStyle = tint;
       ctx.stroke();
+      ctx.restore();
       ctx.restore();
       return;
     }

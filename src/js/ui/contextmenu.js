@@ -154,6 +154,22 @@ export function showContextMenu(app, e, fromSelectionBar = false) {
   if (one?.type === 'image' && one.excerptSource?.boardId) {
     menu.appendChild(item(t('Open source excerpt'), 'link', () => app.openExcerptSource(one)));
   }
+  const backlinks = Array.isArray(app.store?.doc?.excerptBacklinks) ? app.store.doc.excerptBacklinks : [];
+  if (backlinks.length && !(one?.type === 'image' && one.excerptSource?.boardId)) {
+    const near = backlinks.filter((bl) => {
+      const b = bl?.sourceBounds;
+      if (!b) return false;
+      return wp.x >= b.x - 24 && wp.x <= b.x + b.w + 24 && wp.y >= b.y - 24 && wp.y <= b.y + b.h + 24;
+    });
+    const list = (near.length ? near : backlinks).slice(0, 5);
+    for (const bl of list) {
+      menu.appendChild(item(
+        t('Go to excerpt copy: {name}', { name: bl.targetBoardName || t('Untitled board') }),
+        'link',
+        () => app.openExcerptCopy?.(bl)
+      ));
+    }
+  }
   if (one?.type === 'diagram') {
     menu.appendChild(item(t('Edit diagram…'), 'shapes', () => app.openVisualizationStudio?.(one)));
   }
@@ -356,6 +372,33 @@ export function updateSelectionBar(app, targetObj = null) {
         });
         bar.appendChild(styleBtn);
       }
+      if (window.board?.vault) {
+        const linked = sel[0].obsidianPath;
+        if (linked) {
+          bar.appendChild(h('button', {
+            class: 'fmt-btn gb-obsidian-bar-btn',
+            title: t('Sync from Obsidian: {path}', { path: linked }),
+            style: 'width:auto;padding:0 6px;font-size:11px;'
+          }, t('Sync ↓')));
+          bar.lastChild.addEventListener('click', () => app.syncObjectFromObsidian(sel[0]));
+          bar.appendChild(h('button', {
+            class: 'fmt-btn gb-obsidian-bar-btn',
+            title: t('Push to Obsidian: {path}', { path: linked }),
+            style: 'width:auto;padding:0 6px;font-size:11px;'
+          }, t('Push ↑')));
+          bar.lastChild.addEventListener('click', () => app.pushObjectToObsidian(sel[0]));
+        }
+        const mdLinkBtn = h('button', {
+          class: 'fmt-btn' + (linked ? ' on' : ''),
+          title: linked ? t('Linked Obsidian note: {path}', { path: linked }) : t('Link Obsidian .md note…'),
+          style: 'width:auto;padding:0 7px;font-size:11px;font-weight:600;'
+        }, linked ? linked.split('/').pop() : '.md');
+        mdLinkBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openObsidianLinkPopover(app, mdLinkBtn, sel[0]);
+        });
+        bar.appendChild(mdLinkBtn);
+      }
     }
   }
   if (sel.length === 1 && sel[0].type === 'math')
@@ -549,16 +592,16 @@ function formatBar(app, bar) {
     // Group 1: Undo, Redo, Clear, Eraser
     bar.appendChild(mkBtn(t('Undo (Ctrl+Z)'), icon('undo', 15), () => document.execCommand('undo')));
     bar.appendChild(mkBtn(t('Redo (Ctrl+Y)'), icon('redo', 15), () => document.execCommand('redo')));
-    bar.appendChild(mkBtn(t('Clear formatting'), icon('trash', 15), () => te.clearFormatting()));
-    bar.appendChild(mkBtn(t('Delete line or selection'), icon('eraser', 15), () => te.deleteCurrentLineOrSelection()));
+    bar.appendChild(mkBtn(t('Clear formatting'), icon('trash', 15), () => te.runToolbarAction(() => te.clearFormatting())));
+    bar.appendChild(mkBtn(t('Delete line or selection'), icon('eraser', 15), () => te.runToolbarAction(() => te.deleteCurrentLineOrSelection())));
 
     bar.appendChild(sep());
 
     // Group 2: Headings H2, H3, Hn dropdown
-    bar.appendChild(mkBtn(t('Heading 2 (##)'), 'H₂', () => te.toggleLinePrefix('## ', /^#{1,6}\s*/), {
+    bar.appendChild(mkBtn(t('Heading 2 (##)'), 'H₂', () => te.runToolbarAction(() => te.toggleLinePrefix('## ', /^#{1,6}\s*/)), {
       style: 'font-weight:700;font-size:12.5px;padding:0 5px;width:auto;'
     }));
-    bar.appendChild(mkBtn(t('Heading 3 (###)'), 'H₃', () => te.toggleLinePrefix('### ', /^#{1,6}\s*/), {
+    bar.appendChild(mkBtn(t('Heading 3 (###)'), 'H₃', () => te.runToolbarAction(() => te.toggleLinePrefix('### ', /^#{1,6}\s*/)), {
       style: 'font-weight:700;font-size:12.5px;padding:0 5px;width:auto;'
     }));
 
@@ -591,7 +634,7 @@ function formatBar(app, bar) {
 
     bar.appendChild(sep());
 
-    // Group 4: Callouts, Code / 3D, Live Preview, Link
+    // Group 4: Callouts, Code / 3D, Mode Switcher (Live | Source | Read), Link
     const calloutBtn = mkBtn(t('Insert Callout'), '📝▾', (e, anchor) => {
       openCalloutsPopover(app, anchor, te);
     }, { style: 'width:auto;padding:0 5px;font-size:12px;' });
@@ -602,14 +645,46 @@ function formatBar(app, bar) {
     }, { style: 'width:auto;padding:0 5px;font-size:12px;' });
     bar.appendChild(codeBtn);
 
-    const prevBtn = mkBtn(t('Toggle Live Preview (F2)'), '👁️', () => {
-      te.toggleLivePreview();
-    }, { class: 'fmt-preview-btn' });
-    prevBtn.dataset.mdPreview = '1';
-    bar.appendChild(prevBtn);
+    const modeGroup = h('div', { class: 'gb-md-mode-group', role: 'group', 'aria-label': t('Markdown editor mode') });
+    for (const [modeId, label, titleText] of [
+      ['live', t('Live'), t('Obsidian Live Preview (cursor-line raw syntax)')],
+      ['source', t('Source'), t('Source view (raw Markdown)')],
+      ['reading', t('Read'), t('Reading view (F2)')]
+    ]) {
+      const mb = h('button', {
+        type: 'button',
+        class: 'fmt-btn gb-md-mode-btn',
+        'data-md-mode': modeId,
+        title: titleText
+      }, label);
+      mb.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        te.setMarkdownMode(modeId);
+        syncFormat(app, bar);
+      });
+      modeGroup.appendChild(mb);
+    }
+    bar.appendChild(modeGroup);
+
+    if (window.board?.vault) {
+      const obsBtn = h('button', {
+        type: 'button',
+        class: 'fmt-btn gb-obsidian-bar-btn',
+        'data-obsidian-trigger': '1',
+        title: t('Obsidian Vault .md sync'),
+        style: 'width:auto;padding:0 6px;font-size:11.5px;font-weight:600;'
+      }, '.md');
+      obsBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openObsidianLinkPopover(app, obsBtn, te.target, { te });
+      });
+      bar.appendChild(obsBtn);
+    }
 
     const wlBtn = mkBtn(t('Insert Wikilink [[...]] (Ctrl+K)'), icon('link', 15), () => {
-      te.insertWikilinkSyntax();
+      te.runToolbarAction(() => te.insertWikilinkSyntax());
     });
     bar.appendChild(wlBtn);
 
@@ -617,15 +692,15 @@ function formatBar(app, bar) {
 
     // Group 5: Table, Task list, Quote, Typography, Lists
     bar.appendChild(mkBtn(t('Insert Markdown Table'), icon('table', 15), () => {
-      te.insertMarkdownTable(3, 3);
+      te.runToolbarAction(() => te.insertMarkdownTable(3, 3));
     }));
 
     bar.appendChild(mkBtn(t('Task list (- [ ])'), '☑', () => {
-      te.toggleLinePrefix('- [ ] ', /^[-*+]\s+\[[ xX]\]\s+|^[-*+]\s+/);
+      te.runToolbarAction(() => te.toggleLinePrefix('- [ ] ', /^[-*+]\s+\[[ xX]\]\s+|^[-*+]\s+/));
     }, { style: 'font-size:14px;' }));
 
     bar.appendChild(mkBtn(t('Blockquote (> )'), '💬', () => {
-      te.toggleLinePrefix('> ', /^>\s*/);
+      te.runToolbarAction(() => te.toggleLinePrefix('> ', /^>\s*/));
     }, { style: 'font-size:13px;' }));
 
     const typoBtn = mkBtn(t('Paragraph & Typography'), 'T...▾', (e, anchor) => {
@@ -634,11 +709,11 @@ function formatBar(app, bar) {
     bar.appendChild(typoBtn);
 
     bar.appendChild(mkBtn(t('Bulleted list (- )'), '≡·', () => {
-      te.toggleLinePrefix('- ', /^[-*+]\s+/);
+      te.runToolbarAction(() => te.toggleLinePrefix('- ', /^[-*+]\s+/));
     }, { style: 'font-weight:700;font-size:13px;' }));
 
     bar.appendChild(mkBtn(t('Numbered list (1. )'), '1.≡', () => {
-      te.toggleLinePrefix('1. ', /^\d+\.\s+/);
+      te.runToolbarAction(() => te.toggleLinePrefix('1. ', /^\d+\.\s+/));
     }, { style: 'font-weight:700;font-size:12px;' }));
 
     bar.appendChild(sep());
@@ -662,7 +737,7 @@ function formatBar(app, bar) {
       class: 'fmt-btn fmt-bg-trigger',
       title: t('Highlight & Note background')
     });
-    const hlIcon = h('span', { style: 'display:flex;' }, icon('highlighter', 15));
+    const hlIcon = h('span', { style: 'display:flex;', html: icon('highlighter', 15) });
     const bgBar = h('span', { class: 'fmt-bg-bar', style: 'width:12px;height:2.5px;background:var(--accent-2, #0078d4);border-radius:1px;margin-top:1px;' });
     bgBtn.append(hlIcon, bgBar);
     bgBtn.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2px;';
@@ -706,8 +781,112 @@ function formatBar(app, bar) {
 function syncFormat(app, bar) {
   const te = app.textEditor;
   if (!te) return;
-  const prevBtn = bar.querySelector('[data-md-preview]');
-  if (prevBtn) prevBtn.classList.toggle('on', !!te.previewMode);
+  const elig = te.isMarkdownEligible?.();
+  const modeGroup = bar.querySelector('.gb-md-mode-group');
+  if (modeGroup) modeGroup.style.display = elig ? '' : 'none';
+  for (const btn of bar.querySelectorAll('[data-md-mode]')) {
+    btn.classList.toggle('on', btn.dataset.mdMode === (te.mdMode || 'source'));
+  }
+  const obsBtn = bar.querySelector('[data-obsidian-trigger]');
+  if (obsBtn) {
+    const linked = te.target?.obsidianPath;
+    obsBtn.classList.toggle('on', !!linked);
+    obsBtn.textContent = linked ? linked.split('/').pop() : '.md';
+    obsBtn.title = linked ? t('Linked Obsidian note: {path}', { path: linked }) : t('Obsidian Vault .md sync');
+  }
+}
+
+export async function openObsidianLinkPopover(app, anchor, obj, opts = {}) {
+  const wrap = h('div', { class: 'menu gb-obsidian-popover', style: 'min-width:260px;max-width:340px;padding:8px;display:flex;flex-direction:column;gap:6px;' });
+  const closeAndRefocus = () => {
+    closePopover();
+    if (opts.te?.activeInput) opts.te.activeInput.focus({ preventScroll: true });
+  };
+
+  if (!app.settings?.obsidianVaultPath) {
+    wrap.appendChild(h('div', { style: 'font-size:12px;color:var(--text-2);padding:4px 2px;' }, t('Connect an Obsidian vault folder to link, sync, or insert .md notes.')));
+    const chooseBtn = h('button', { class: 'menu-item', style: 'font-weight:600;justify-content:center;' }, t('Choose Obsidian vault folder…'));
+    chooseBtn.addEventListener('click', async () => {
+      const picked = await app.chooseObsidianVault();
+      closePopover();
+      if (picked?.path) openObsidianLinkPopover(app, anchor, obj, opts);
+    });
+    wrap.appendChild(chooseBtn);
+    openPopover(anchor, wrap, { key: 'obsidian-link' });
+    return;
+  }
+
+  const head = h('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:6px;padding:0 2px;' },
+    h('span', { style: 'font-size:11.5px;font-weight:700;color:var(--text-2);' }, app.settings.obsidianVaultName || t('Obsidian vault')),
+    h('button', { class: 'tool-sm', style: 'font-size:11px;padding:2px 6px;' }, t('Change…'))
+  );
+  head.lastChild.addEventListener('click', async () => {
+    const picked = await app.chooseObsidianVault();
+    closePopover();
+    if (picked?.path) openObsidianLinkPopover(app, anchor, obj, opts);
+  });
+  wrap.appendChild(head);
+
+  if (obj?.obsidianPath) {
+    wrap.appendChild(h('div', { style: 'font-size:11px;color:var(--text-2);word-break:break-all;padding:2px 4px;background:var(--surface-2);border-radius:4px;' }, obj.obsidianPath));
+    const actRow = h('div', { style: 'display:flex;gap:6px;' });
+    const pullB = h('button', { class: 'menu-item', style: 'flex:1;justify-content:center;font-size:12px;' }, t('Sync ↓'));
+    pullB.addEventListener('click', async () => { closePopover(); await app.syncObjectFromObsidian(obj); });
+    const pushB = h('button', { class: 'menu-item', style: 'flex:1;justify-content:center;font-size:12px;' }, t('Push ↑'));
+    pushB.addEventListener('click', async () => { closePopover(); await app.pushObjectToObsidian(obj); });
+    const unlinkB = h('button', { class: 'menu-item', style: 'flex:1;justify-content:center;font-size:12px;' }, t('Unlink'));
+    unlinkB.addEventListener('click', () => { app.unlinkObjectObsidianNote(obj); closeAndRefocus(); });
+    actRow.append(pullB, pushB, unlinkB);
+    wrap.appendChild(actRow);
+    wrap.appendChild(h('div', { class: 'menu-sep' }));
+  }
+
+  const search = h('input', {
+    type: 'search',
+    placeholder: t('Filter .md notes…'),
+    style: 'width:100%;padding:5px 8px;border:1px solid var(--stroke);border-radius:6px;background:var(--surface-2);color:var(--text);font-size:12px;'
+  });
+  wrap.appendChild(search);
+
+  const list = h('div', { style: 'max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;' },
+    h('div', { style: 'font-size:11.5px;color:var(--text-2);padding:6px;' }, t('Loading…'))
+  );
+  wrap.appendChild(list);
+  openPopover(anchor, wrap, { key: 'obsidian-link' });
+
+  const notes = await app.listObsidianVaultNotes();
+  const renderNotes = () => {
+    const q = search.value.trim().toLowerCase();
+    list.innerHTML = '';
+    const filtered = q ? notes.filter((n) => n.relPath.toLowerCase().includes(q)) : notes;
+    if (!filtered.length) {
+      list.appendChild(h('div', { style: 'font-size:11.5px;color:var(--text-2);padding:6px;' }, t('No matching .md notes in vault.')));
+      return;
+    }
+    for (const note of filtered.slice(0, 100)) {
+      const item = h('button', {
+        class: 'menu-item' + (obj?.obsidianPath === note.relPath ? ' on' : ''),
+        style: 'justify-content:space-between;font-size:12px;padding:5px 8px;text-align:left;'
+      },
+        h('span', { style: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' }, note.relPath)
+      );
+      item.addEventListener('click', async () => {
+        closePopover();
+        if (opts.insertMode || !obj) {
+          await app.insertObsidianVaultNote(note.relPath);
+        } else {
+          app.linkObjectToObsidianNote(obj, note.relPath);
+          const curText = (opts.te?.active && opts.te.target?.id === obj.id) ? opts.te.el?.value : obj.text;
+          if (!String(curText || '').trim()) {
+            await app.syncObjectFromObsidian(app.store.get(obj.id) || obj);
+          }
+        }
+      });
+      list.appendChild(item);
+    }
+  };
+  search.addEventListener('input', renderNotes);
+  renderNotes();
 }
 
 function openHeadingsPopover(app, anchor, te) {
@@ -727,7 +906,7 @@ function openHeadingsPopover(app, anchor, te) {
     );
     btn.addEventListener('click', () => {
       closePopover();
-      te.toggleLinePrefix(pfx, /^#{1,6}\s*/);
+      te.runToolbarAction(() => te.toggleLinePrefix(pfx, /^#{1,6}\s*/));
     });
     menu.appendChild(btn);
   }
@@ -755,7 +934,7 @@ function openCalloutsPopover(app, anchor, te) {
     );
     btn.addEventListener('click', () => {
       closePopover();
-      te.insertCallout(kind, label, t('Recall content details here.'));
+      te.runToolbarAction(() => te.insertCallout(kind, label, t('Recall content details here.')));
     });
     menu.appendChild(btn);
   }
@@ -774,7 +953,7 @@ function openCodePopover(app, anchor, te) {
     const btn = h('button', { class: 'menu-item', style: 'padding:7px 12px;font-size:12.5px;' }, label);
     btn.addEventListener('click', () => {
       closePopover();
-      fn();
+      te.runToolbarAction(fn);
     });
     menu.appendChild(btn);
   }
@@ -823,7 +1002,7 @@ function openTypographyPopover(app, anchor, te) {
   );
   fmBtn.addEventListener('click', () => {
     closePopover();
-    te.insertBlockText('---\ntitle: "' + (app.currentBoardName?.() || 'Note') + '"\ntags: []\naliases: []\n---');
+    te.runToolbarAction(() => te.insertBlockText('---\ntitle: "' + (app.currentBoardName?.() || 'Note') + '"\ntags: []\naliases: []\n---'));
   });
   menu.appendChild(fmBtn);
 
@@ -998,13 +1177,32 @@ export function startImageCrop(app, imgObj) {
   closePopover();
   document.getElementById('imageCropOverlay')?.remove();
   const snap = app.store.snapshot([imgObj.id]);
+  const origX = imgObj.x, origY = imgObj.y, origW = imgObj.w, origH = imgObj.h;
   const origCrop = imgObj.crop ? { ...imgObj.crop } : null;
+
+  const sx0 = origCrop && typeof origCrop.sx === 'number' ? origCrop.sx : 0;
+  const sy0 = origCrop && typeof origCrop.sy === 'number' ? origCrop.sy : 0;
+  const sw0 = origCrop && typeof origCrop.sw === 'number' && origCrop.sw > 0.001 ? origCrop.sw : 1;
+  const sh0 = origCrop && typeof origCrop.sh === 'number' && origCrop.sh > 0.001 ? origCrop.sh : 1;
+  const fullW = origW / sw0;
+  const fullH = origH / sh0;
+  const fullX = origX - sx0 * fullW;
+  const fullY = origY - sy0 * fullH;
 
   let curCrop = origCrop ? { ...origCrop } : { sx: 0, sy: 0, sw: 1, sh: 1 };
   if (typeof curCrop.sx !== 'number') curCrop.sx = 0;
   if (typeof curCrop.sy !== 'number') curCrop.sy = 0;
   if (typeof curCrop.sw !== 'number') curCrop.sw = 1;
   if (typeof curCrop.sh !== 'number') curCrop.sh = 1;
+
+  if (origCrop) {
+    delete imgObj.crop;
+    imgObj.x = fullX;
+    imgObj.y = fullY;
+    imgObj.w = fullW;
+    imgObj.h = fullH;
+    app.surface.invalidate();
+  }
 
   const stage = document.getElementById('stage') || document.body;
 
@@ -1198,7 +1396,10 @@ export function startImageCrop(app, imgObj) {
     app.toast(t('Crop reset'));
   };
 
+  const isFullCrop = (c) => c.sx <= 0.001 && c.sy <= 0.001 && c.sw >= 0.999 && c.sh >= 0.999;
+
   btnCancel.onclick = () => {
+    imgObj.x = origX; imgObj.y = origY; imgObj.w = origW; imgObj.h = origH;
     if (origCrop) imgObj.crop = origCrop;
     else delete imgObj.crop;
     app.surface.invalidate();
@@ -1206,10 +1407,15 @@ export function startImageCrop(app, imgObj) {
   };
 
   btnApply.onclick = () => {
-    if (curCrop.sx === 0 && curCrop.sy === 0 && curCrop.sw === 1 && curCrop.sh === 1) {
+    if (isFullCrop(curCrop)) {
       delete imgObj.crop;
+      imgObj.x = fullX; imgObj.y = fullY; imgObj.w = fullW; imgObj.h = fullH;
     } else {
       imgObj.crop = { ...curCrop };
+      imgObj.x = fullX + curCrop.sx * fullW;
+      imgObj.y = fullY + curCrop.sy * fullH;
+      imgObj.w = Math.max(8, curCrop.sw * fullW);
+      imgObj.h = Math.max(8, curCrop.sh * fullH);
     }
     app.store.commitSnapshot('crop image', snap);
     app.surface.invalidate();
