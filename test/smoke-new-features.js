@@ -305,7 +305,41 @@ const browserChecks = String.raw`(async () => {
     );
   } catch (e) { out.virtualizedPdfEngine = e.message; }
 
-  // 25. No Uncaught Renderer Errors
+  // 25. Workflow Studio, Visual Styles (Material 3 / Glassmorphism), Hide & Native Fallbacks
+  try {
+    const { WorkflowStudio } = await import('app://board/js/ui/workflow-studio.js');
+    const { fallbackFitStroke } = await import('app://board/js/platform/native-fallbacks.js');
+    app.settings = {
+      ...(app.settings || {}),
+      sidebarRibbonStyle: 'glassmorphism',
+      markdownEditMode: 'live',
+      defaultCardStyle: 'canvas',
+      videoQuickBookmark: true,
+      enableObsidianProtocol: true,
+      enableLanSyncProtocol: true,
+      enableAudioSyncProtocol: true,
+      enableStudySrsProtocol: true
+    };
+    const ws = new WorkflowStudio(app);
+    ws.open();
+    const opened = ws.isOpen === true;
+    ws.close();
+    const fit = fallbackFitStroke([
+      { x: 0, y: 0, t: 10 },
+      { x: 10, y: 20, t: 30 },
+      { x: 25, y: 40, t: 70 }
+    ], 0.8);
+    app.store.add({ id: 'smoke_cov', type: 'curtain', x: 0, y: 0, w: 80, h: 40, revealed: false }, 'test');
+    app.store.add({ id: 'smoke_man_hid', type: 'text', attachedTo: 'smoke_cov', x: 10, y: 10, text: 'secret', hidden: true, hiddenManual: true }, 'test');
+    app.setCovers(['smoke_cov'], false, 'conceal');
+    const keptManualHidden = app.store.get('smoke_man_hid')?.hidden === true && app.store.get('smoke_man_hid')?.hiddenManual === true;
+    app.store.remove(['smoke_man_hid', 'smoke_cov']);
+    const fb = window.board;
+    const hasParityApis = !!(fb?.search?.indexPdf && fb?.markdown?.renderToHtml && fb?.colorimetry?.wcagContrast && fb?.archive?.exportBundle && fb?.export?.exportHighResPng);
+    out.workflowStudioAndParity = opened && !ws.isOpen && fit.segments.length >= 1 && fit.segments[0].t_start === 10 && keptManualHidden && hasParityApis;
+  } catch (e) { out.workflowStudioAndParity = e.message; }
+
+  // 26. No Uncaught Renderer Errors
   const errs = window.__errors || [];
   out.rendererErrors = errs.length === 0;
 
@@ -339,6 +373,7 @@ async function run(win, app) {
     connectorsAndSnapPorts: 'Orthogonal 90-degree routing and magnetic snap ports',
     workspaceSessionAndGraph: 'Multi-tab workspace session save and knowledge graph clustering halos',
     virtualizedPdfEngine: 'Virtualized PDF engine (100 pages < 35 KB JSON, 0 Base64, LOD cache, TRAP 1/2/6 intact)',
+    workflowStudioAndParity: 'Workflow Studio (Material 3 / Glassmorphism), manual hide cover guard & native fallback parity',
     rendererErrors: 'No uncaught renderer errors'
   };
 

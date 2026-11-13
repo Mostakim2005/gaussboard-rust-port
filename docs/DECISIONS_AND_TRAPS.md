@@ -556,3 +556,27 @@ flowchart LR
   * `src-tauri/src/clipboard.rs` -> `decode_png_data_url_to_rgba`, `encode_rgba_to_png_data_url`, `clipboard_read`, `clipboard_write`
   * `src/js/platform/tauri-board.js`, `src/js/app.js` -> `ownWriteAt`, `_storeExcerptOnClipboard`, `_matchExcerptMeta`
 
+### [DECISION: Unified-Z-Tokens-HudLayout-And-Themeable-WorkflowStudio] | Aliases: --z-* tokens, updateHudLayout, Material 3, Glassmorphism, WorkflowStudio, protocol switches, native-fallbacks
+> **1-Line Summary:** Centralized HUD layering into `--z-*` tokens + `App.updateHudLayout()`, exposed Material 3 / Glassmorphism styling and four workflow controls in a dedicated collapsible `WorkflowStudio` drawer, and standardized Rust<->JS fallback APIs rather than adding ad-hoc `z-index` overrides or leaving Rust commands without web/Android fallbacks.
+* **Decision Maker:** `[DECIDED BY: HUMAN + AGENT]`
+* **Rationale:** Independent `z-index: 9999` values and overlapping left/right drawers caused floating pills, `#audioBar`, and `#pagetab` to collide across tablet and desktop viewports. Routing drawer/pill state through `App.updateHudLayout()`, adding viewport holes to `Interaction.visibleArea()`, and unifying Material 3 / Glassmorphism via `html[data-ui-style]` eliminated collisions while preserving both design languages. Aligning `tauri-board.js` parameter names (`tags` comma string, `targets`, `scheduleSrsCard`) with `native-fallbacks.js` keeps desktop Rust and Web/Android paths interchangeable.
+* **Code Anchors (Grep Targets):**
+  * `src/css/app.css` -> `:root` (`--z-*`), `html[data-ui-style]`
+  * `src/js/app.js` -> `App.updateHudLayout`, `App.applyTheme`, `App.applyProtocolPreferences`
+  * `src/js/ui/workflow-studio.js`, `src/js/ui/sidebar-ribbon.js` -> `WorkflowStudio`, `SidebarRibbon`
+  * `src/js/platform/native-fallbacks.js`, `src/js/platform/tauri-board.js` -> `attachNativeFallbacks`, `fallbackFitStroke`
+
+### [TRAP: Manual-Hide-Clobbered-By-Cover-Reveal-And-Loose-I18n-Keys] | Aliases: hiddenManual, StudyRunner.setReviewState, App.setCovers, i18n-extract, getLabel, initSync protocol guard
+> **1-Line Summary:** Toggling Study Tape or Answer Covers mutates `hidden` on attached items and must check `!o.hiddenManual`, while `i18n-extract.js` rejects dynamic `t(item.labelKey)` calls unless arrays use literal `getLabel: () => t('...')` thunks.
+```mermaid
+flowchart LR
+    Cover["Cover toggle / StudyRunner.setReviewState"] -->|"Without hiddenManual check"| Leak["Unwanted reveal of user-hidden note"]
+    Cover -->|"Check !o.hiddenManual"| Safe["Manually hidden item stays hidden until user restores it"]
+```
+* **Invariant Guard:** `App.hideSelectedObjects()` marks `{ hidden: true, hiddenManual: true }`, and both `App.setCovers()` and `StudyRunner.setReviewState()` skip mutating `hidden` whenever `hiddenManual` is true. Separately, keep `if (!window.board || !window.board.sync) return;` first in `App.initSync()` before checking `enableLanSyncProtocol`, so web-adapter zero-sync-bridge security tests hold.
+* **Code Anchors (Grep Targets):**
+  * `src/js/app.js` -> `App.hideSelectedObjects`, `App.setCovers`, `App.initSync`, `App.showPairingCode`
+  * `src/js/ui/study-runner.js` -> `StudyRunner.setReviewState`
+  * `src/js/ui/workflow-studio.js` -> `HUD_TOGGLES`, `PROTOCOL_TOGGLES`
+  * `scripts/i18n-extract.js` -> `PROBLEMS`
+

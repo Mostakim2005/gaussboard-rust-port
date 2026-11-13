@@ -334,6 +334,17 @@ export class VideoExporter {
     // message instead of waiting 15 s for a media error on app://.../undefined.
     const noAsset = tracks.find((tr) => !tr || !tr.assetId);
     if (noAsset) throw new Error(`Recording "${noAsset.name || noAsset.id || '?'}" has no audio file to export`);
+    if (tracks.length === 1 && (format !== 'mp4' || typeof VideoEncoder === 'undefined')) {
+      return this.exportReplayVideo({
+        track: tracks[0],
+        width,
+        height,
+        fps,
+        onProgress,
+        cameraMode,
+        fixedFrame
+      });
+    }
 
     this.cancelled = false;
     const canvas = document.createElement('canvas');

@@ -183,8 +183,11 @@
         const bytes = await invoke('assets_read_raw', { id });
         return new Uint8Array(bytes);
       },
+      remove: (id) => invoke('assets_delete', { id }),
+      putBinary: async (id, uint8Array) =>
+        invoke('assets_put_binary', { id, dataB64: uint8ToBase64(uint8Array) }),
       putBinaryDirect: async (id, uint8Array) =>
-        invoke('assets_put_binary', { id, dataB64: uint8ToBase64(uint8Array) })
+        invoke('assets_put_binary_direct', { assetId: id, buffer: toByteArray(uint8Array) })
     },
 
     pdf: {
@@ -333,32 +336,55 @@
         invoke('bundle_import', { archivePath, targetDir })
     },
 
+    get bundle() { return this.archive; },
+
     audioInspect: {
       inspect: (filePath) => invoke('audio_inspect', { filePath })
     },
 
     geometry: {
       fitStroke: (points, epsilon) =>
-        invoke('stroke_simplify_and_fit', { points, epsilon: typeof epsilon === 'number' ? epsilon : null })
+        invoke('stroke_simplify_and_fit', { points, epsilon: typeof epsilon === 'number' ? epsilon : null }),
+      binaryFitStroke: (rawBuffer) => invoke('binary_simplify_stroke', rawBuffer)
     },
 
     search: {
       indexBoard: (boardId, title, content, tags) =>
-        invoke('search_index_board', { boardId, title, content, tags: tags || null }),
+        invoke('search_index_board', {
+          boardId,
+          title,
+          content,
+          tags: Array.isArray(tags) ? tags.join(',') : (tags || null)
+        }),
       deleteBoard: (boardId) =>
         invoke('search_delete_board', { boardId }),
       query: (query, limit) =>
         invoke('search_boards', { query, limit: typeof limit === 'number' ? limit : null }),
       recordLinks: (boardId, boardTitle, links) =>
-        invoke('graph_record_links', { boardId, boardTitle, links: Array.isArray(links) ? links : [] }),
+        invoke('graph_record_links', { boardId, boardTitle, targets: Array.isArray(links) ? links : [] }),
       getBacklinks: (boardId) =>
         invoke('graph_get_backlinks', { boardId }),
       upsertCard: (cardId, boardId, prompt, dueTimestamp) =>
         invoke('study_card_upsert', { cardId, boardId, prompt, dueTimestamp: Number(dueTimestamp) }),
       getDueCards: (nowTimestamp, limit) =>
         invoke('study_cards_due', { nowTimestamp: Number(nowTimestamp), limit: typeof limit === 'number' ? limit : null }),
+      scheduleSrsCard: (cardId, boardId, prompt, intervalDays, stability, difficulty) =>
+        invoke('srs_schedule_card', {
+          cardId,
+          boardId,
+          prompt,
+          intervalDays: Number(intervalDays),
+          stability: Number(stability),
+          difficulty: Number(difficulty)
+        }),
+      getSrsDueCards: () => invoke('srs_get_due_cards'),
       indexPdf: (boardId, title, filePath, tags) =>
-        invoke('search_index_pdf', { boardId, title, filePath, tags: tags || null }),
+        invoke('search_index_pdf', {
+          boardId,
+          title,
+          filePath,
+          tags: Array.isArray(tags) ? tags.join(',') : (tags || null)
+        }),
       extractPdfText: (filePath) =>
         invoke('pdf_extract_full_text', { filePath }),
       searchAudioToInk: (query, limit) =>

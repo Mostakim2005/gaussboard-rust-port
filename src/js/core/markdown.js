@@ -1240,6 +1240,25 @@ export function getMarkdownInlineCss({
 }
 
 /**
+ * Render Markdown through the Rust pulldown-cmark engine when running in Tauri,
+ * falling back to the pure-JS Obsidian/Markdown HTML renderer on Web/Android.
+ * @param {string} markdownText
+ * @param {object} [options]
+ * @returns {Promise<string>}
+ */
+export async function renderMarkdownToHtmlNative(markdownText, options = {}) {
+  const source = String(markdownText || '');
+  try {
+    const fn = typeof window !== 'undefined' ? window.board?.markdown?.renderToHtml : null;
+    if (typeof fn === 'function') {
+      const html = await fn(source);
+      if (typeof html === 'string' && html.length) return html;
+    }
+  } catch {}
+  return renderMarkdownToHtml(source, options);
+}
+
+/**
  * Builds an SVG <foreignObject> data URI for sharp Canvas2D rendering.
  */
 export function buildMarkdownSvgDataUri(markdownText, options = {}) {

@@ -3,6 +3,7 @@
 import { generatePdfFromHtml } from './web-pdf.js';
 import { t } from '../i18n.js';
 import { browserClipboardWrite } from './web-clipboard.js';
+import { attachNativeFallbacks } from './native-fallbacks.js';
 
 const FILE_ROOT = 'https://appassets.androidplatform.net/files/';
 const CHUNK_BYTES = 96 * 1024;
@@ -241,5 +242,5 @@ export function createAndroidAdapter(native = window.GazBoardNative) {
     window.app.saveSettings();
     window.app.panels.syncChanged();
   });
-  return adapter;
+  return attachNativeFallbacks(adapter);
 }

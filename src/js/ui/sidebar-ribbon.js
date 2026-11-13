@@ -260,11 +260,13 @@ export class SidebarRibbon {
   open() {
     this.expanded = true;
     this.syncState();
+    this.app?.updateHudLayout?.('ribbon');
   }
 
   close() {
     this.expanded = false;
     this.syncState();
+    this.app?.updateHudLayout?.();
   }
 
   toggleDeck() {
@@ -285,6 +287,12 @@ export class SidebarRibbon {
     this.latch.classList.toggle('hidden', this.expanded);
     this.latch.classList.toggle('dock-left', this.position === 'left');
     this.latch.classList.toggle('dock-right', this.position === 'right');
+
+    if (typeof document !== 'undefined' && document.body) {
+      document.body.classList.toggle('ribbon-left', this.position === 'left');
+      document.body.classList.toggle('ribbon-right', this.position === 'right');
+      document.body.classList.toggle('ribbon-open', !!this.expanded);
+    }
 
     // Update active category in spine
     if (this.catButtons) {
@@ -1235,6 +1243,7 @@ export class SidebarRibbon {
       btnLeft.classList.add('active');
       btnRight.classList.remove('active');
       this.syncState();
+      this.app?.updateHudLayout?.('ribbon');
     });
 
     const btnRight = h('button', {
@@ -1245,6 +1254,7 @@ export class SidebarRibbon {
       btnRight.classList.add('active');
       btnLeft.classList.remove('active');
       this.syncState();
+      this.app?.updateHudLayout?.('ribbon');
     });
 
     posRow.appendChild(btnLeft);
@@ -1264,7 +1274,12 @@ export class SidebarRibbon {
       this.styleMode = 'glassmorphism';
       btnGlass.classList.add('active');
       btnMat.classList.remove('active');
+      if (this.app?.settings) {
+        this.app.settings.sidebarRibbonStyle = 'glassmorphism';
+        this.app.saveSettings?.();
+      }
       this.syncState();
+      this.app?.applyTheme?.();
     });
 
     const btnMat = h('button', {
@@ -1274,7 +1289,12 @@ export class SidebarRibbon {
       this.styleMode = 'material';
       btnMat.classList.add('active');
       btnGlass.classList.remove('active');
+      if (this.app?.settings) {
+        this.app.settings.sidebarRibbonStyle = 'material';
+        this.app.saveSettings?.();
+      }
       this.syncState();
+      this.app?.applyTheme?.();
     });
 
     styleRow.appendChild(btnGlass);

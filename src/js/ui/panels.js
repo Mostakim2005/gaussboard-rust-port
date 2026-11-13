@@ -70,6 +70,8 @@ export function createPanels(app) {
       app.tabBar.onBoardLoaded(app.store.doc.id, app.store.doc.name);
     }
 
+    app.updateHudLayout?.();
+
     // The page fades rather than sliding away; it stops being a page once it has gone.
     // Becoming the side panel again happens with no animation at all: otherwise
     // the faded page turned back into a fully visible side panel and slid off
@@ -86,6 +88,7 @@ export function createPanels(app) {
 
   function open(key, label, render) {
     if (currentKey === key) { close(); return; }
+    app.updateHudLayout?.('panel');
     if (key === 'boards') {
       app._savedHudState = {
         replayBar: app.replayBar?.visible,

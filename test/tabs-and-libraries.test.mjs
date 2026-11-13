@@ -70,12 +70,12 @@ test('TabBar in-memory LRU session cache and tab life cycle', async () => {
   const mockDoc = { id: 'board-alpha', name: 'Alpha Study Board', objects: { 's1': { type: 'stroke' } } };
   const mockStore = {
     doc: JSON.parse(JSON.stringify(mockDoc)),
-    _undoStack: [{ op: 'add', id: 's1' }],
-    _redoStack: [],
+    undoStack: [{ op: 'add', id: 's1' }],
+    redoStack: [],
     reset() {
       this.doc = { id: 'temp', name: 'Untitled board', objects: {} };
-      this._undoStack = [];
-      this._redoStack = [];
+      this.undoStack = [];
+      this.redoStack = [];
     }
   };
 
@@ -91,6 +91,9 @@ test('TabBar in-memory LRU session cache and tab life cycle', async () => {
     saveBeforeLeaving: async () => {},
     newBoard(silent) {
       mockStore.doc = { id: 'board-beta', name: 'Beta Notes', objects: {} };
+    },
+    loadBoard(payload) {
+      mockStore.doc = JSON.parse(JSON.stringify(payload));
     },
     syncUI() {},
     toast() {}

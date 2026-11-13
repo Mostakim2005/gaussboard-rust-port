@@ -40,7 +40,7 @@ test('single-recording export forwards its selected camera framing into the repl
   const exporter = new VideoExporter({});
   exporter.exportReplayVideo = async (options) => options;
   const result = await exporter.exportStitchedReplayVideo({
-    tracks: [{ id: 'one-track' }], width: 1280, height: 720, fps: 30,
+    tracks: [{ id: 'one-track', assetId: 'asset-1' }], width: 1280, height: 720, fps: 30,
     cameraMode: VIDEO_CAMERA_MODES.FOLLOW, fixedFrame: VIDEO_FIXED_FRAMES.BOARD
   });
   assert.equal(result.cameraMode, VIDEO_CAMERA_MODES.FOLLOW);

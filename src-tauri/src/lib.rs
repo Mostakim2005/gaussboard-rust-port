@@ -293,6 +293,8 @@ pub fn run() {
             search::graph_get_backlinks,
             search::study_card_upsert,
             search::study_cards_due,
+            search::srs_schedule_card,
+            search::srs_get_due_cards,
             search::search_index_pdf,
             search::pdf_extract_full_text,
             export_engine::export_board_high_res_png,

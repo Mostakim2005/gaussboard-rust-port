@@ -41,21 +41,33 @@ function installDomShim() {
     clear: () => { storageMap.clear(); }
   };
 
-  const makeEl = (tag = 'div') => ({
-    tagName: String(tag).toUpperCase(),
-    style: {},
-    dataset: {},
-    classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
-    children: [],
-    appendChild(c) { this.children.push(c); return c; },
-    removeChild(c) { return c; },
-    setAttribute() {},
-    getAttribute() { return null; },
-    addEventListener() {},
-    removeEventListener() {},
-    querySelector() { return null; },
-    querySelectorAll() { return []; },
-    getBoundingClientRect() { return { left: 0, top: 0, width: 800, height: 600 }; },
+  const makeEl = (tag = 'div') => {
+    const classes = new Set();
+    return {
+      tagName: String(tag).toUpperCase(),
+      style: {},
+      dataset: {},
+      classList: {
+        add: (...names) => names.forEach((n) => classes.add(n)),
+        remove: (...names) => names.forEach((n) => classes.delete(n)),
+        toggle: (n, force) => (typeof force === 'boolean' ? (force ? (classes.add(n), true) : (classes.delete(n), false)) : (classes.has(n) ? (classes.delete(n), false) : (classes.add(n), true))),
+        contains: (n) => classes.has(n)
+      },
+      set className(v) {
+        classes.clear();
+        String(v || '').split(/\s+/).filter(Boolean).forEach((c) => classes.add(c));
+      },
+      get className() { return [...classes].join(' '); },
+      children: [],
+      appendChild(c) { this.children.push(c); return c; },
+      removeChild(c) { return c; },
+      setAttribute() {},
+      getAttribute() { return null; },
+      addEventListener() {},
+      removeEventListener() {},
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+      getBoundingClientRect() { return { left: 0, top: 0, width: 800, height: 600 }; },
     getContext() {
       return {
         canvas: this,
@@ -70,7 +82,8 @@ function installDomShim() {
         putImageData() {}
       };
     }
-  });
+  };
+  };
 
   globalThis.localStorage = localStorage;
   globalThis.sessionStorage = localStorage;
@@ -83,6 +96,7 @@ function installDomShim() {
     body: makeEl('body'),
     createElement: (tag) => makeEl(tag),
     createElementNS: (_ns, tag) => makeEl(tag),
+    createTextNode: (txt) => String(txt ?? ''),
     getElementById: () => null,
     querySelector: () => null,
     querySelectorAll: () => [],
@@ -108,6 +122,7 @@ async function createAppHarness() {
   const { Store } = await import(pathToFileURL(path.join(ROOT, 'src/js/core/store.js')).href);
   const { Camera } = await import(pathToFileURL(path.join(ROOT, 'src/js/core/camera.js')).href);
   const { StudyRunner } = await import(pathToFileURL(path.join(ROOT, 'src/js/ui/study-runner.js')).href);
+  const { attachNativeFallbacks } = await import(pathToFileURL(path.join(ROOT, 'src/js/platform/native-fallbacks.js')).href);
 
   const store = new Store();
   const cam = new Camera();
@@ -127,7 +142,7 @@ async function createAppHarness() {
     dropHidden() {},
     onCovers(ids) {
       const set = new Set(ids);
-      return store.objects.filter((o) => o.coverId && set.has(o.coverId));
+      return store.objects.filter((o) => (o.coverId && set.has(o.coverId)) || (o.attachedTo && set.has(o.attachedTo)));
     },
     setCovers(ids, revealed, label) {
       const ops = [];
@@ -136,7 +151,7 @@ async function createAppHarness() {
         ops.push({ t: 'set', id: o.id, before: { [key]: o[key] }, after: { [key]: val } });
       };
       for (const id of ids) { const c = this.store.get(id); if (c) set(c, 'revealed', revealed); }
-      for (const o of this.onCovers(ids)) set(o, 'hidden', revealed);
+      for (const o of this.onCovers(ids)) { if (!o.hiddenManual) set(o, 'hidden', revealed); }
       this.store.commit(label, ops);
     },
     toggleCurtain(id) {
@@ -155,6 +170,7 @@ async function createAppHarness() {
   };
 
   app.studyRunner = new StudyRunner(app);
+  globalThis.window.board = attachNativeFallbacks(globalThis.window.board || {});
   globalThis.window.app = app;
   return app;
 }

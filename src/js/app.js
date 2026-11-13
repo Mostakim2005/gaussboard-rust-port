@@ -34,7 +34,7 @@ import { showContextMenu, updateSelectionBar } from './ui/contextmenu.js';
 import { closePopover, popoverOpen, openPopover, h } from './ui/popover.js';
 import { icon } from './ui/icons.js';
 import { PENS, penById, rememberPen, heldPenId, FONTS } from './ui/palettes.js';
-import { exportPng, exportSvg, exportPdf, saveBoardFile, openBoardFile, exportable } from './export.js';
+import { exportPng, exportSvg, exportPdf, saveBoardFile, openBoardFile, exportable, exportHighResPngNative, exportWorkspaceBundle, importWorkspaceBundle } from './export.js';
 import { boardThumb, boardPicture } from './ui/thumb.js';
 import {
   pickAndInsertDocument, pickAndInsertImage, pickAndInsertAudio, insertDocument,
@@ -63,6 +63,9 @@ import { MoleculeViewerModal } from './ui/molecule-viewer.js';
 import { ChemicalSketcherModal } from './ui/chemical-sketcher.js';
 import { FunctionGrapherModal } from './ui/function-grapher.js';
 import { AcademicDictionaryModal } from './ui/academic-dictionary.js';
+import { WorkflowStudio } from './ui/workflow-studio.js';
+import { extractTags } from './core/markdown.js';
+import { fallbackFitStroke, createNativeFallbacks } from './platform/native-fallbacks.js';
 
 /** An id GazBoard itself would make: safe as a file name on every system, the phone included. */
 const plainBoardId = (id) => typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(id);
@@ -112,6 +115,10 @@ export const DEFAULT_SETTINGS = {
   fountainColor: '#002050', fountainWidth: 4, fountainSlant: 45, fountainFlex: 'normal',
   calligraphyColor: '#1a1a1a', calligraphyWidth: 12, calligraphyAngle: 35, calligraphyFlatness: 4,
   textMarkdown: true, noteMarkdown: true, markdownEditMode: 'live', obsidianVaultPath: '', obsidianVaultName: '', defaultCardStyle: 'canvas', wikilinkDblClick: 'ask', quickActionPopovers: true,
+  zenMode: false,
+  hudHideTopbar: false, hudHideToolbar: false, hudHideZoombar: false, hudHidePagebar: false,
+  hudHideTabBar: false, hudHidePagestrip: false, hudHideReplayBar: false, hudHideSidebarRibbon: false,
+  enableObsidianProtocol: true, enableLanSyncProtocol: true, enableAudioSyncProtocol: true, enableStudySrsProtocol: true,
   // My boards' folders: a catalogue on this device, never inside a board (core/folders.js)
   folders: [], boardFolders: {},
   /*
@@ -319,6 +326,7 @@ class App {
     this.visualizationStudio = new VisualizationDialog(this);
     this.sidebarRibbon = new SidebarRibbon(this);
     if (typeof document !== 'undefined') this.sidebarRibbon.init();
+    this.workflowStudio = new WorkflowStudio(this);
     this.studyRunner = new StudyRunner(this);
     this.periodicTableModal = new PeriodicTableModal(this);
     this.phetRunnerModal = new PhetRunnerModal(this);
@@ -362,6 +370,20 @@ class App {
     // after the board is up, never before: the first thing anyone sees should
     // be their work, not a question
     setTimeout(() => this.startUpdateFlow(), 2500);
+    if (typeof document !== 'undefined') {
+      document.getElementById('hiddenPill')?.addEventListener('click', () => this.unhideAllObjects());
+      document.getElementById('zenPill')?.addEventListener('click', () => this.setZenMode(false));
+    }
+    try {
+      window.board?.power?.getStatus?.()?.then?.((st) => {
+        if (!st) return;
+        this.powerStatus = st;
+        if (typeof document !== 'undefined' && document.documentElement) {
+          document.documentElement.dataset.powerSaver = st.power_saver ? 'true' : 'false';
+        }
+      })?.catch?.(() => {});
+    } catch {}
+    this.applyHudPreferences();
     this.setTool('pen');
     this.syncUI();
   }
@@ -463,6 +485,7 @@ class App {
     const root = document.documentElement;
     if (want === 'light' || want === 'dark') root.dataset.theme = want;
     else delete root.dataset.theme;
+    root.dataset.uiStyle = this.settings?.sidebarRibbonStyle === 'material' ? 'material' : 'glassmorphism';
     this.watchSystemTheme();
     // the board is painted on a canvas, which no stylesheet can reach
     setDarkBoard(this.darkMode);
@@ -475,6 +498,7 @@ class App {
     // and on a phone the status bar and navigation bar belong to Android, not
     // to this stylesheet - a dark board in a light frame is only half a theme
     try { window.board?.setTheme?.(want); } catch {}
+    try { window.board?.window?.applyMica?.(this.darkMode)?.catch?.(() => {}); } catch {}
   }
 
   /** Follow the machine's own setting while we are set to 'system'. */
@@ -642,6 +666,7 @@ class App {
     if (pic) doc.thumb = pic;
     await window.board.boards.save({ id: doc.id, json: JSON.stringify(doc) });
     if (this.store.doc.id !== savingId) return;   // saved; the board now open is not this one
+    this.indexBoardMetadataInBackground(doc);
     this.joinRecentOnceUsed();
     this.unsavedNew = false;
     this._unsaved = false;
@@ -2371,6 +2396,7 @@ class App {
       el.title = t('Back to {name}', { name });
     }
     el.classList.toggle('show', show);
+    this.updateHudLayout?.();
   }
 
   /** Drop a cover in the middle of the view, selected, ready to be sized. */
@@ -2418,7 +2444,7 @@ class App {
       ops.push({ t: 'set', id: o.id, before: { [key]: o[key] }, after: { [key]: val } });
     };
     for (const id of ids) { const c = this.store.get(id); if (c) set(c, 'revealed', revealed); }
-    for (const o of this.onCovers(ids)) set(o, 'hidden', revealed);
+    for (const o of this.onCovers(ids)) { if (!o.hiddenManual) set(o, 'hidden', revealed); }
     this.store.commit(label, ops);
   }
 
@@ -2827,11 +2853,12 @@ class App {
     if (this.readingMode && [
       'undo', 'edit.undo', 'redo', 'edit.redo', 'edit.delete', 'edit.cut', 'edit.paste',
       'edit.duplicate', 'edit.erasePencil', 'edit.group', 'edit.ungroup', 'edit.nameGroup', 'edit.clear', 'edit.lock',
+      'edit.hide', 'edit.unhideAll', 'edit.smoothStrokes', 'edit.invertContrast',
       'table.addRow', 'table.removeRow', 'table.addCol', 'table.removeCol',
       'order.front', 'order.back', 'order.forward', 'order.backward',
       'view.background', 'insert.image', 'insert.audio', 'insert.math', 'insert.document',
       'insert.table', 'insert.curtain', 'insert.tape', 'insert.boardlink', 'insert.diagram',
-      'curtain.reveal', 'curtain.coverAll', 'page.add', 'page.duplicate', 'page.delete', 'page.fitContent'
+      'curtain.reveal', 'curtain.coverAll', 'page.add', 'page.duplicate', 'page.delete', 'page.fitContent', 'page.toggleClip'
     ].includes(id)) return;
     const s = this.store, sf = this.surface;
     switch (id) {
@@ -2948,6 +2975,16 @@ class App {
       case 'export.jsoncanvas': this.exportJsonCanvas(); break;
       case 'insert.jsoncanvas': this.importJsonCanvas(); break;
       case 'export.markdownSidecar': this.exportMarkdownSidecar(); break;
+      case 'export.highResPng': this.checkOffPageBeforeExport().then((go) => go && exportHighResPngNative(this, { scale: 2 })); break;
+      case 'export.bundle': exportWorkspaceBundle(this); break;
+      case 'import.bundle': importWorkspaceBundle(this); break;
+      case 'edit.hide': this.hideSelectedObjects(); break;
+      case 'edit.unhideAll': this.unhideAllObjects(); break;
+      case 'edit.smoothStrokes': this.smoothSelectedStrokes(); break;
+      case 'edit.invertContrast': this.invertSelectedInkContrast(); break;
+      case 'view.zen': this.toggleZenMode(); break;
+      case 'view.workflowStudio': this.toggleWorkflowStudio(); break;
+      case 'page.toggleClip': this.store?.setPageClip?.(!(this.store?.doc?.pageClip === true), 'toggle page clip'); break;
       case 'page.margin': this.openPageMarginDialog(); break;
       case 'board.back': this.goBack(); break;
       case 'curtain.reveal': this.revealSelectedCurtains(); break;
@@ -3141,6 +3178,305 @@ class App {
 
   toggleReadingMode() { this.setReadingMode(!this.readingMode); }
 
+  toggleViewMode() { this.toggleReadingMode(); }
+
+  toggleWorkflowStudio(force) {
+    if (!this.workflowStudio) this.workflowStudio = new WorkflowStudio(this);
+    this.workflowStudio.toggle(force);
+  }
+
+  applyHudPreferences() {
+    if (typeof document === 'undefined') return;
+    const s = this.settings || {};
+    const root = document.documentElement;
+    if (root) {
+      root.dataset.uiStyle = s.sidebarRibbonStyle === 'material' ? 'material' : 'glassmorphism';
+    }
+    const body = document.body;
+    if (!body) return;
+    const zen = !!s.zenMode;
+    body.classList.toggle('zen-mode', zen);
+    body.classList.toggle('hud-hide-topbar', !!s.hudHideTopbar);
+    body.classList.toggle('hud-hide-toolbar', !!s.hudHideToolbar);
+    body.classList.toggle('hud-hide-zoombar', !!s.hudHideZoombar);
+    body.classList.toggle('hud-hide-pagebar', !!s.hudHidePagebar);
+    body.classList.toggle('hud-hide-tabbar', !!s.hudHideTabBar);
+    body.classList.toggle('hud-hide-pagestrip', !!s.hudHidePagestrip);
+    body.classList.toggle('hud-hide-replaybar', !!s.hudHideReplayBar);
+    body.classList.toggle('hud-hide-ribbon', !!s.hudHideSidebarRibbon);
+    const zenPill = document.getElementById('zenPill');
+    if (zenPill) {
+      zenPill.hidden = !zen;
+      zenPill.textContent = zen ? t('Exit Zen (Alt+Z)') : '';
+    }
+  }
+
+  setZenMode(on) {
+    const next = !!on;
+    this.settings.zenMode = next;
+    this.saveSettings();
+    this.applyHudPreferences();
+    this.updateHudLayout();
+    this.workflowStudio?.sync?.();
+    this.toast(next ? t('Zen mode enabled — press Alt+Z to restore HUD') : t('Zen mode disabled'));
+  }
+
+  toggleZenMode() {
+    this.setZenMode(!this.settings.zenMode);
+  }
+
+  applyProtocolPreferences(key, enabled) {
+    if (key === 'enableAudioSyncProtocol' && !enabled) {
+      this.audioBar?.close?.();
+      this.replayEngine?.pause?.();
+    } else if (key === 'enableStudySrsProtocol' && !enabled) {
+      this.stopStudySession();
+    } else if (key === 'enableLanSyncProtocol') {
+      if (enabled) this.initSync();
+      else { try { window.board?.sync?.setEnabled?.(false); } catch {} }
+    }
+    this.syncUI();
+    this.surface?.invalidate?.();
+  }
+
+  updateHudLayout(source = '') {
+    if (source === 'pagestrip') {
+      if (this.pdfSidebar?.isOpen) this.pdfSidebar.close();
+      if (this.noteOverview?.visible) this.noteOverview.close();
+      if (this.sidebarRibbon?.expanded && this.sidebarRibbon.position !== 'right') this.sidebarRibbon.close();
+    } else if (source === 'pdfSidebar') {
+      if (this.pageStrip?.open) this.pageStrip.toggle(false);
+      if (this.noteOverview?.visible) this.noteOverview.close();
+      if (this.sidebarRibbon?.expanded && this.sidebarRibbon.position !== 'right') this.sidebarRibbon.close();
+    } else if (source === 'noteOverview') {
+      if (this.pageStrip?.open) this.pageStrip.toggle(false);
+      if (this.pdfSidebar?.isOpen) this.pdfSidebar.close();
+      if (this.sidebarRibbon?.expanded && this.sidebarRibbon.position !== 'right') this.sidebarRibbon.close();
+    } else if (source === 'ribbon') {
+      if (this.sidebarRibbon?.position === 'right') {
+        if (this.workflowStudio?.isOpen) this.workflowStudio.close();
+        if (typeof document !== 'undefined' && document.getElementById('panel')?.classList?.contains('open')) {
+          this.panels?.close?.();
+        }
+      } else {
+        if (this.pageStrip?.open) this.pageStrip.toggle(false);
+        if (this.pdfSidebar?.isOpen) this.pdfSidebar.close();
+        if (this.noteOverview?.visible) this.noteOverview.close();
+      }
+    } else if (source === 'panel') {
+      if (this.workflowStudio?.isOpen) this.workflowStudio.close();
+      if (this.sidebarRibbon?.expanded && this.sidebarRibbon.position === 'right') this.sidebarRibbon.close();
+    } else if (source === 'workflowStudio') {
+      if (typeof document !== 'undefined' && document.getElementById('panel')?.classList?.contains('open')) {
+        this.panels?.close?.();
+      }
+      if (this.sidebarRibbon?.expanded && this.sidebarRibbon.position === 'right') this.sidebarRibbon.close();
+    }
+
+    if (typeof document === 'undefined' || !document.body) return;
+    const panelOpen = !!document.getElementById('panel')?.classList?.contains('open');
+    const studioOpen = !!this.workflowStudio?.isOpen;
+    const ribbonOpen = !!this.sidebarRibbon?.expanded;
+    const ribbonRight = this.sidebarRibbon?.position === 'right';
+    const leftDrawerOpen = !!(
+      this.pageStrip?.open ||
+      this.pdfSidebar?.isOpen ||
+      this.noteOverview?.visible ||
+      (ribbonOpen && !ribbonRight)
+    );
+    const rightDrawerOpen = !!(panelOpen || studioOpen || (ribbonOpen && ribbonRight));
+    document.body.classList.toggle('left-drawer-open', leftDrawerOpen);
+    document.body.classList.toggle('right-drawer-open', rightDrawerOpen);
+    document.body.classList.toggle('panel-open', panelOpen);
+    document.body.classList.toggle('studio-open', studioOpen);
+    document.body.classList.toggle('audio-bar-open', !!this.audioBar?.visible);
+    const replayVisible = !!(this.replayBar?.el && this.replayBar.el.style.display !== 'none');
+    document.body.classList.toggle('replay-bar-open', replayVisible);
+    const backShown = !!document.getElementById('backPill')?.classList?.contains('show');
+    const viewShown = !!document.getElementById('viewPill')?.classList?.contains('show');
+    document.body.classList.toggle('has-back-pill', backShown);
+    document.body.classList.toggle('has-view-pill', viewShown);
+    if (this.audioBar?.visible) this.audioBar.place?.();
+  }
+
+  hideSelectedObjects() {
+    if (!this.surface?.selection?.size || !this.store) return 0;
+    const ids = withAttached(this.store, [...this.surface.selection]).filter((id) => {
+      const o = this.store.get(id);
+      return o && !o.hidden;
+    });
+    if (!ids.length) return 0;
+    this.store.updateMany(ids, { hidden: true, hiddenManual: true }, 'hide element');
+    this.setSelection([]);
+    this.surface.invalidate();
+    this.syncUI();
+    this.toast(t('Hidden {n} element(s)', { n: ids.length }));
+    return ids.length;
+  }
+
+  unhideObject(id) {
+    const o = this.store?.get?.(id);
+    if (!o) return false;
+    const blockedByCover = !!(o.attachedTo && this.store.get(o.attachedTo)?.revealed);
+    this.store.update(id, {
+      hiddenManual: false,
+      ...(blockedByCover ? {} : { hidden: false })
+    }, 'restore element');
+    this.surface?.invalidate?.();
+    this.syncUI();
+    return true;
+  }
+
+  unhideAllObjects() {
+    if (!this.store) return 0;
+    const targets = this.store.objects.filter((o) => o && o.hiddenManual);
+    if (!targets.length) return 0;
+    this.store.updateMany(targets.map((o) => o.id), (o) => {
+      const blockedByCover = !!(o.attachedTo && this.store.get(o.attachedTo)?.revealed);
+      return {
+        hiddenManual: false,
+        ...(blockedByCover ? {} : { hidden: false })
+      };
+    }, 'restore hidden elements');
+    this.surface?.invalidate?.();
+    this.syncUI();
+    this.toast(t('Restored {n} element(s)', { n: targets.length }));
+    return targets.length;
+  }
+
+  syncHiddenPill() {
+    if (typeof document === 'undefined') return;
+    const pill = document.getElementById('hiddenPill');
+    const hiddenCount = (this.store?.objects || []).filter((o) => o && o.hidden && o.hiddenManual).length;
+    document.body?.classList?.toggle('has-hidden-pill', hiddenCount > 0);
+    if (!pill) return;
+    pill.hidden = hiddenCount === 0;
+    pill.textContent = hiddenCount ? t('{n} hidden · Show all', { n: hiddenCount }) : '';
+  }
+
+  async smoothSelectedStrokes() {
+    const strokes = this.selected.filter((o) => o.type === 'stroke' && !o.locked && o.points?.length >= 3);
+    if (!strokes.length || !this.store) return 0;
+    const snap = this.store.snapshot(strokes.map((o) => o.id));
+    let updated = 0;
+    const fitter = window.board?.geometry?.fitStroke || fallbackFitStroke;
+    for (const o of strokes) {
+      let fit = null;
+      try { fit = await fitter(o.points, 0.8); } catch { fit = null; }
+      if (!fit || !Array.isArray(fit.segments) || !fit.segments.length) {
+        fit = fallbackFitStroke(o.points, 0.8);
+      }
+      if (!fit?.segments?.length) continue;
+      const hadT = o.points.some((pt) => typeof pt.t === 'number' && Number.isFinite(pt.t));
+      const pressures = o.points.map((pt) => (typeof pt.p === 'number' ? pt.p : 0.5));
+      const avgP = pressures.length ? pressures.reduce((a, b) => a + b, 0) / pressures.length : 0.5;
+      const dense = [];
+      for (let i = 0; i < fit.segments.length; i++) {
+        const seg = fit.segments[i];
+        const t0 = Number(seg.t_start) || 0;
+        const t1 = Number(seg.t_end) || t0;
+        const steps = i === fit.segments.length - 1 ? [0, 0.34, 0.67, 1] : [0, 0.34, 0.67];
+        for (const u of steps) {
+          const v = 1 - u;
+          const x = v * v * v * seg.p0[0] + 3 * v * v * u * seg.p1[0] + 3 * v * u * u * seg.p2[0] + u * u * u * seg.p3[0];
+          const y = v * v * v * seg.p0[1] + 3 * v * v * u * seg.p1[1] + 3 * v * u * u * seg.p2[1] + u * u * u * seg.p3[1];
+          const pt = { x, y, p: avgP };
+          if (hadT) pt.t = Math.round(t0 + (t1 - t0) * u);
+          dense.push(pt);
+        }
+      }
+      if (dense.length < 2) continue;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const pt of dense) {
+        if (pt.x < minX) minX = pt.x;
+        if (pt.y < minY) minY = pt.y;
+        if (pt.x > maxX) maxX = pt.x;
+        if (pt.y > maxY) maxY = pt.y;
+      }
+      o.points = dense;
+      o.bbox = { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
+      updated++;
+    }
+    if (updated) {
+      this.store.commitSnapshot('smooth strokes', snap);
+      this.surface?.repaintAll?.();
+      this.toast(t('Smoothed {n} stroke(s)', { n: updated }));
+    }
+    return updated;
+  }
+
+  async invertSelectedInkContrast() {
+    const items = this.selected.filter((o) => !o.locked && typeof o.color === 'string' && /^#[0-9a-f]{3,8}$/i.test(o.color));
+    if (!items.length || !this.store) return 0;
+    const bgHex = this.store.doc?.background?.color || (this.darkMode ? '#1e1e1e' : '#ffffff');
+    const invertFn = window.board?.colorimetry?.invertThemeInk || createNativeFallbacks().colorimetry.invertThemeInk;
+    const snap = this.store.snapshot(items.map((o) => o.id));
+    let changed = 0;
+    for (const o of items) {
+      let nextColor = o.color;
+      try {
+        const res = await invertFn(o.color, bgHex, this.darkMode);
+        if (typeof res === 'string' && res.startsWith('#')) nextColor = res;
+      } catch {}
+      if (nextColor !== o.color) {
+        o.color = nextColor;
+        changed++;
+      }
+    }
+    if (changed) {
+      this.store.commitSnapshot('optimize contrast', snap);
+      this.surface?.repaintAll?.();
+      this.toast(t('Updated contrast for {n} item(s)', { n: changed }));
+    }
+    return changed;
+  }
+
+  indexBoardMetadataInBackground(doc) {
+    if (!doc?.id) return;
+    if (this.settings?.enableObsidianProtocol !== false && window.board?.search) {
+      const plainText = (doc.order || [])
+        .map((id) => doc.objects?.[id])
+        .filter((o) => o && !o.hidden)
+        .map((o) => o.text || o.note || o.title || '')
+        .filter(Boolean)
+        .join(' ');
+      const tags = extractTags(plainText);
+      const links = linkedRefs(Object.values(doc.objects || {}));
+      try {
+        window.board.search.indexBoard?.(doc.id, doc.name || '', plainText, tags)?.catch?.(() => {});
+        window.board.search.recordLinks?.(doc.id, doc.name || '', links)?.catch?.(() => {});
+      } catch {}
+    }
+    if (this.settings?.enableAudioSyncProtocol !== false && window.board?.search?.recordStrokeTiming) {
+      const bySession = new Map();
+      for (const id of (doc.order || [])) {
+        const o = doc.objects?.[id];
+        if (!o || o.type !== 'stroke' || !o.audioId || !o.points?.length) continue;
+        let arr = bySession.get(o.audioId);
+        if (!arr) { arr = []; bySession.set(o.audioId, arr); }
+        const pts = o.points;
+        const t0 = Number.isFinite(o.t0) ? o.t0 : (Number.isFinite(pts[0]?.t) ? pts[0].t : 0);
+        let t1 = Number.isFinite(o.t1) ? o.t1 : (Number.isFinite(pts[pts.length - 1]?.t) ? pts[pts.length - 1].t : t0);
+        if (t1 < t0) t1 = t0;
+        const b = o.bbox || { x: pts[0].x || 0, y: pts[0].y || 0, w: 0, h: 0 };
+        arr.push({
+          stroke_id: String(o.id),
+          t_start_ms: Math.round(t0),
+          t_end_ms: Math.round(t1),
+          center_x: (b.x || 0) + (b.w || 0) / 2,
+          center_y: (b.y || 0) + (b.h || 0) / 2,
+          width: b.w || 0,
+          height: b.h || 0
+        });
+      }
+      for (const [sessionId, rows] of bySession.entries()) {
+        try {
+          window.board.search.recordStrokeTiming(doc.id, sessionId, rows)?.catch?.(() => {});
+        } catch {}
+      }
+    }
+  }
+
   toggleSidebarRibbon() {
     if (!this.sidebarRibbon) {
       this.sidebarRibbon = new SidebarRibbon(this);
@@ -3150,6 +3486,10 @@ class App {
   }
 
   startStudySession(opts) {
+    if (this.settings?.enableStudySrsProtocol === false) {
+      this.toast(t('FSRS Spaced Repetition protocol is currently disabled in Workflow Studio.'));
+      return null;
+    }
     if (!this.studyRunner) this.studyRunner = new StudyRunner(this);
     return this.studyRunner.start(opts);
   }
@@ -4337,6 +4677,18 @@ class App {
     updateSelectionBar(this);
     this.syncZoom();
     this.interaction?.refreshInkCursor?.();
+    this.syncHiddenPill();
+    this.applyHudPreferences();
+    if (typeof document !== 'undefined') {
+      const btnStudio = document.getElementById('btnWorkflowStudio');
+      if (btnStudio) {
+        const open = !!this.workflowStudio?.isOpen;
+        btnStudio.classList.toggle('active', open);
+        btnStudio.setAttribute('aria-expanded', String(open));
+      }
+    }
+    this.workflowStudio?.sync?.();
+    this.updateHudLayout();
   }
 
   showHoverToolbar(obj) {
@@ -4549,6 +4901,9 @@ class App {
     if (this.surface) this.surface.showGroupOutlines = this.settings.showGroupOutlines !== false;
     this.replayBar?.updateScratchUI?.();
     this.interaction.hideInkPointer();
+    this.applyTheme();
+    this.applyHudPreferences();
+    this.updateHudLayout();
     this.setTool(this.tool);
     this.surface.invalidate();
     this.syncUI();
@@ -5520,6 +5875,9 @@ class App {
       [t('2D Chemical Sketcher & SMILES'), 'Ctrl+Shift+K'],
       [t('Academic Dictionary & Thesaurus'), 'Ctrl+Shift+D'],
       [t('Active Study Session & FSRS'), 'Ctrl+Shift+R'],
+      [t('Workflow Studio'), 'Ctrl+Shift+O'],
+      [t('Hide / restore selection'), 'Ctrl+H'],
+      [t('Zen Mode'), 'Alt+Z'],
       [t('Knowledge Graph View'), 'Alt+G'],
       [t('Document Navigator & TOC'), 'Alt+T']
     ];
@@ -6054,6 +6412,18 @@ class App {
 
     if (e.altKey && (e.key === 'g' || e.key === 'G')) { e.preventDefault(); this.openGraphView(); return; }
     if (e.altKey && (e.key === 't' || e.key === 'T')) { e.preventDefault(); this.togglePdfSidebar(); return; }
+    if (e.altKey && !mod && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); this.toggleZenMode(); return; }
+    if (mod && e.shiftKey && (e.key === 'o' || e.key === 'O')) {
+      e.preventDefault();
+      this.toggleWorkflowStudio();
+      return;
+    }
+    if (mod && !e.shiftKey && !e.altKey && (e.key === 'h' || e.key === 'H')) {
+      e.preventDefault();
+      if (this.surface?.selection?.size) this.hideSelectedObjects();
+      else this.unhideAllObjects();
+      return;
+    }
     if (mod && (e.key === 'b' || e.key === 'B')) {
       e.preventDefault();
       this.toggleSidebarRibbon();
@@ -6284,6 +6654,7 @@ class App {
     // The web build has no sync at all; the preload that provides it is the
     // desktop one. Absent is normal, not an error.
     if (!window.board || !window.board.sync) return;
+    if (this.settings.enableLanSyncProtocol === false) return;
     this.syncPeers = [];
     this.syncStatus = null;
     this._incoming = [];
@@ -6928,6 +7299,7 @@ class App {
    */
   async showPairingCode() {
     if (!window.board || !window.board.sync) return;
+    if (this.settings.enableLanSyncProtocol === false) return;
     const overlay = document.getElementById('overlay');
     const card = document.getElementById('overlayCard');
     let remember = false;

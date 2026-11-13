@@ -26,6 +26,7 @@ export class PdfSidebarDrawer {
   open() {
     this.isOpen = true;
     this.render();
+    this.app?.updateHudLayout?.('pdfSidebar');
   }
 
   close() {
@@ -38,6 +39,7 @@ export class PdfSidebarDrawer {
       this.el.remove();
       this.el = null;
     }
+    this.app?.updateHudLayout?.();
   }
 
   render() {
@@ -109,7 +111,7 @@ export class PdfSidebarDrawer {
 
     this.el = h('div', {
       class: 'pdf-sidebar modal-glass',
-      style: 'position:fixed;top:48px;left:0;bottom:0;width:310px;z-index:900;display:flex;flex-direction:column;background:rgba(18,22,28,0.92);backdrop-filter:blur(16px);border-right:1px solid rgba(255,255,255,0.12);box-shadow:4px 0 24px rgba(0,0,0,0.4);animation:slideRight 0.2s cubic-bezier(0.16,1,0.3,1);'
+      style: 'position:fixed;top:48px;left:0;bottom:0;width:310px;z-index:var(--z-drawer, 35);display:flex;flex-direction:column;background:rgba(18,22,28,0.92);backdrop-filter:blur(16px);border-right:1px solid rgba(255,255,255,0.12);box-shadow:4px 0 24px rgba(0,0,0,0.4);animation:slideRight 0.2s cubic-bezier(0.16,1,0.3,1);'
     }, header, tabNav, body);
 
     document.body.appendChild(this.el);

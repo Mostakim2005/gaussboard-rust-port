@@ -209,6 +209,20 @@ export class GraphViewModal {
       // offline fallback
     }
 
+    // 5. Merge indexed backlinks from Rust SQLite / fallback search graph
+    if (this.app?.settings?.enableObsidianProtocol !== false && window.board?.search?.getBacklinks) {
+      try {
+        const backlinks = await window.board.search.getBacklinks(currentId);
+        if (Array.isArray(backlinks)) {
+          for (const bl of backlinks) {
+            if (!bl?.source_board_id || bl.source_board_id === currentId) continue;
+            addNode(bl.source_board_id, bl.source_title || bl.source_board_id, 'board', '#4dabf7', 13);
+            addEdge(bl.source_board_id, currentId, bl.edge_type || 'wikilink');
+          }
+        }
+      } catch (_) {}
+    }
+
     this.nodes = nodes;
     this.edges = edges;
   }

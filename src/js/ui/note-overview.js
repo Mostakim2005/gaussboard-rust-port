@@ -117,13 +117,13 @@ export class NoteOverviewDrawer {
     // Slide-out Drawer Panel
     const drawer = h('div', {
       class: 'note-overview-drawer',
-      style: 'position:absolute;top:0;left:0;bottom:0;width:350px;max-width:88vw;background:var(--surface,#ffffff);color:var(--text,#111111);box-shadow:6px 0 24px rgba(0,0,0,0.18);z-index:9500;display:flex;flex-direction:column;border-right:1px solid var(--line,rgba(128,128,128,0.12));'
+      style: 'position:absolute;top:0;left:0;bottom:0;width:350px;max-width:88vw;background:var(--surface,#ffffff);color:var(--text,#111111);box-shadow:6px 0 24px rgba(0,0,0,0.18);z-index:var(--z-drawer, 35);display:flex;flex-direction:column;border-right:1px solid var(--line,rgba(128,128,128,0.12));'
     }, header, tabNav, this.overviewContainer, this.boardsWrapper);
 
     // Backdrop
     this.el = h('div', {
       id: 'noteOverviewBackdrop',
-      style: 'position:fixed;inset:0;z-index:9400;background:rgba(0,0,0,0.3);backdrop-filter:blur(3px);display:none;'
+      style: 'position:fixed;inset:0;z-index:var(--z-drawer-backdrop, 34);background:rgba(0,0,0,0.3);backdrop-filter:blur(3px);display:none;'
     }, drawer);
 
     this.el.addEventListener('click', (e) => {
@@ -162,12 +162,14 @@ export class NoteOverviewDrawer {
     this.visible = true;
     this.el.style.display = 'block';
     this.switchTab(this.activeTab || 'overview');
+    this.app?.updateHudLayout?.('noteOverview');
   }
 
   close() {
     if (!this.visible) return;
     this.visible = false;
     if (this.el) this.el.style.display = 'none';
+    this.app?.updateHudLayout?.();
   }
 
   toggle() {

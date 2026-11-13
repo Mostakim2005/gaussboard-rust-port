@@ -388,6 +388,14 @@ export class Interaction {
     this.app.boardPoint = { x: wp.x, y: wp.y, at: performance.now() };
 
     if (this.pointers.size >= 2) {
+      const types = [...this.pointers.values()].map((p) => p.type);
+      // A hand resting on the glass while the pen writes or holds is a palm,
+      // not a second finger or pinch. Drop it before cancelling any active hold.
+      if ((this.action || this._hold) && e.pointerType === 'touch' && types.includes('pen')) {
+        this.pointers.delete(e.pointerId);
+        try { this.canvas.releasePointerCapture?.(e.pointerId); } catch { /* never captured */ }
+        return;
+      }
       this.cancelHold();
       this.cancelShapeHold();
     }
@@ -396,17 +404,6 @@ export class Interaction {
       // Two fingers pinch. A mouse (or a second pen) arriving while a stroke
       // is already down means "pan the canvas under what I'm drawing" instead.
       const types = [...this.pointers.values()].map((p) => p.type);
-      // A hand resting on the glass while the pen writes is a palm, not a
-      // second finger. It used to satisfy "not every pointer is touch", so it
-      // started a canvas pan under the nib: the cursor turned into a hand for
-      // a moment and the writing slid away underneath. Drop it and carry on
-      // inking. The mouse-pans-under-the-pen gesture below is unaffected -
-      // that one is a mouse, deliberately put down by the other hand.
-      if (this.action && e.pointerType === 'touch' && types.includes('pen')) {
-        this.pointers.delete(e.pointerId);
-        try { this.canvas.releasePointerCapture?.(e.pointerId); } catch { /* never captured */ }
-        return;
-      }
       if (this.lateTouch(e)) {
         this.pointers.delete(e.pointerId);
         try { this.canvas.releasePointerCapture?.(e.pointerId); } catch { /* never captured */ }
@@ -1730,12 +1727,22 @@ export class Interaction {
     if (typeof document === 'undefined' || !sf.canvas || !sf.canvas.getBoundingClientRect) return null;
     const c = sf.canvas.getBoundingClientRect();
     const holes = [];
-    for (const id of ['toolbar', 'zoombar', 'pagebar', 'ctxbar', 'pagestrip', 'pagetab']) {
+    for (const id of [
+      'toolbar', 'zoombar', 'pagebar', 'ctxbar', 'pagestrip', 'pagetab',
+      'replayBar', 'audioBar', 'backPill', 'viewPill', 'workflowStudioSheet', 'zenPill', 'hiddenPill'
+    ]) {
       const el = document.getElementById(id);
       if (!el || !el.getBoundingClientRect) continue;
       const r = el.getBoundingClientRect();
       if (r.width < 1 || r.height < 1 || getComputedStyle(el).visibility === 'hidden' || getComputedStyle(el).display === 'none') continue;
       holes.push({ x: r.left - c.left, y: r.top - c.top, w: r.width, h: r.height });
+    }
+    const ribbon = document.querySelector('.sidebar-ribbon.expanded');
+    if (ribbon && ribbon.getBoundingClientRect) {
+      const rr = ribbon.getBoundingClientRect();
+      if (rr.width >= 1 && rr.height >= 1 && getComputedStyle(ribbon).visibility !== 'hidden' && getComputedStyle(ribbon).display !== 'none') {
+        holes.push({ x: rr.left - c.left, y: rr.top - c.top, w: rr.width, h: rr.height });
+      }
     }
     return { w: sf.width, h: sf.height, holes };
   }
@@ -1806,7 +1813,9 @@ export class Interaction {
 
   seekToStrokeAudio(hit, { requireActive = false } = {}) {
     if (!hit || hit.t0 == null) return false;
-    if (this.app?.settings?.tapStrokeToSeek === false || this.app?.settings?.audioInkSync === false) return false;
+    if (this.app?.settings?.enableAudioSyncProtocol === false
+        || this.app?.settings?.tapStrokeToSeek === false
+        || this.app?.settings?.audioInkSync === false) return false;
     if (requireActive && !(this.app?.replayEngine?.active || this.app?.audioBar?.visible)) return false;
     const tracks = ((this.store || this.app?.store)?.doc?.audioTracks || []);
     const activeTrackId = this.app?.replayEngine?.track?.id || this.app?.audioBar?.track?.id;
@@ -1856,7 +1865,8 @@ export class Interaction {
 
     const sel = this.surface.selection;
     const hit = pick(this.store, wp, 8 / this.surface.cam.z);
-    if (hit && e.altKey && this.app?.settings?.tapStrokeToSeek !== false && this.app?.settings?.audioInkSync !== false && hit.t0 != null) {
+    if (hit && e.altKey && this.app?.settings?.enableAudioSyncProtocol !== false
+        && this.app?.settings?.tapStrokeToSeek !== false && this.app?.settings?.audioInkSync !== false && hit.t0 != null) {
       const tracks = ((this.store || this.app.store)?.doc?.audioTracks || []);
       const track = tracks.find((tr) => tr.id === hit.audioId) || this.app.replayEngine?.track || tracks[0];
       if (track) {
@@ -2158,7 +2168,8 @@ export class Interaction {
       }
     }
     // F-301: Click-to-Seek (Audio Jump): tapping a synced stroke seeks audio and pulses highlight
-    if (this.app?.settings?.tapStrokeToSeek !== false && this.app?.settings?.audioInkSync !== false
+    if (this.app?.settings?.enableAudioSyncProtocol !== false
+        && this.app?.settings?.tapStrokeToSeek !== false && this.app?.settings?.audioInkSync !== false
         && (this.app?.replayEngine?.active || this.app?.audioBar?.visible)) {
       const hit = pick(this.store, p0, 8 / z);
       const activeTrackId = this.app.replayEngine?.track?.id || this.app.audioBar?.track?.id;
@@ -2254,7 +2265,8 @@ export class Interaction {
       return;
     }
     const replay = this.app.replayEngine;
-    if (this.app.settings?.audioInkSync !== false && replay?.track?.id && hit.audioId === replay.track.id && hit.t0 != null) {
+    if (this.app.settings?.enableAudioSyncProtocol !== false
+        && this.app.settings?.audioInkSync !== false && replay?.track?.id && hit.audioId === replay.track.id && hit.t0 != null) {
       replay.seek(hit.t0);
       const box = worldBounds(hit);
       if (box) this.surface.pulseHighlight(box);

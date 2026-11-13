@@ -1516,23 +1516,11 @@ async function run() {
     const fs = require('node:fs');
     const path = require('node:path');
     const root = path.join(__dirname, '..');
-    const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-    const patterns = (pkg.build && pkg.build.files) || [];
+    const tauriConf = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri', 'tauri.conf.json'), 'utf8'));
+    const libRs = fs.readFileSync(path.join(root, 'src-tauri', 'src', 'lib.rs'), 'utf8');
+    const cargoToml = fs.readFileSync(path.join(root, 'src-tauri', 'Cargo.toml'), 'utf8');
+    const resources = (tauriConf.bundle && tauriConf.bundle.resources) || [];
 
-    // Only the handful of glob shapes electron-builder is given here.
-    const toRe = (p) => new RegExp('^' + p
-      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-      .replace(/\*\*\/\*/g, ' ')
-      .replace(/\*\*/g, ' ')
-      .replace(/\*/g, '[^/]*')
-      .replace(/ /g, '.*') + '$');
-
-    const allow = patterns.filter((p) => !p.startsWith('!')).map(toRe);
-    const deny = patterns.filter((p) => p.startsWith('!')).map((p) => toRe(p.slice(1)));
-    const packaged = (rel) => allow.some((re) => re.test(rel)) && !deny.some((re) => re.test(rel));
-
-    // Every file the main process can reach by a relative require, walked from
-    // the two entry points electron-builder is told about.
     const seen = new Set();
     const missing = [];
     const walk = (rel) => {
@@ -1540,26 +1528,29 @@ async function run() {
       seen.add(rel);
       const abs = path.join(root, rel);
       if (!fs.existsSync(abs)) { missing.push(`${rel} (not on disk)`); return; }
-      if (!packaged(rel)) missing.push(rel);
-      const src = fs.readFileSync(abs, 'utf8');
-      for (const m of src.matchAll(/require\(\s*['"](\.[^'"]+)['"]\s*\)/g)) {
+      const code = fs.readFileSync(abs, 'utf8');
+      for (const m of code.matchAll(/require\(\s*['"](\.[^'"]+)['"]\s*\)/g)) {
         let next = path.posix.normalize(path.posix.join(path.posix.dirname(rel), m[1]));
         if (!/\.[cm]?js$/.test(next)) next += '.js';
         walk(next);
       }
     };
-    walk('main.js');
-    walk('preload.js');
+    walk('sync/desktop.js');
 
-    check('every module the app requires is inside the installer',
+    check('every module sync/desktop.js requires exists on disk',
       missing.length === 0,
-      missing.length ? 'MISSING: ' + missing.join(', ') : `${seen.size} files reachable, all packaged`);
+      missing.length ? 'MISSING: ' + missing.join(', ') : `${seen.size} files reachable`);
 
-    // Named rather than merely implied, because this is the one that got away.
-    check('the sync folder is on the packaged list by name',
-      patterns.some((p) => /^sync\//.test(p)), patterns.join(' | '));
-    for (const f of ['sync/desktop.js', 'sync/node.js', 'sync/protocol.js', 'sync/firewall.js']) {
-      check(`${f} would be in app.asar`, packaged(f));
+    check('Tauri bundle points frontendDist at ../src and bundles ../src resources',
+      tauriConf.build?.frontendDist === '../src' && resources.some((r) => String(r).includes('../src')),
+      JSON.stringify({ frontendDist: tauriConf.build?.frontendDist, resources }));
+
+    check('Rust crate compiles lan_sync module into lib.rs and includes networking crates',
+      /pub\s+mod\s+lan_sync\s*;/.test(libRs) && /x25519-dalek|aes-gcm/.test(cargoToml));
+
+    for (const f of ['sync/desktop.js', 'sync/node.js', 'sync/protocol.js', 'sync/firewall.js',
+      'src-tauri/src/lan_sync/mod.rs', 'src-tauri/src/lan_sync/protocol.rs', 'src-tauri/src/lan_sync/discovery.rs', 'src-tauri/src/lan_sync/commands.rs']) {
+      check(`${f} exists for desktop / LAN sync`, fs.existsSync(path.join(root, f)));
     }
   });
 

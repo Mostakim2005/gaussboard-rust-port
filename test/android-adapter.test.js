@@ -189,19 +189,20 @@ test('fontpack.js uses the Android fetcher when there is one, and reports what i
     `download went ${JSON.stringify(r)} after asking ${JSON.stringify(asked)} — on Android the page's own fetch is always refused`);
 });
 
-test('Android allows exactly the font addresses fontpack.js asks for, and nothing else', async () => {
+test('Android CSP and bridge allow exactly the font sources fontpack.js asks for', async () => {
   const fs = require('node:fs');
-  const kt = fs.readFileSync(require.resolve('../android/app/src/main/java/com/gazboard/app/MainActivity.kt'), 'utf8');
+  const html = fs.readFileSync(require.resolve('../src/index.html'), 'utf8');
+  const cspMatch = html.match(/http-equiv="Content-Security-Policy"\s+content="([^"]+)"/i);
+  assert.ok(cspMatch, 'src/index.html must define a Content-Security-Policy');
+  const connectSrc = cspMatch[1].split(';').find((d) => d.trim().startsWith('connect-src')) || '';
   const { PACKS, SOURCES } = await import('../src/js/fontpack.js');
-  const bases = [...kt.matchAll(/"(https:\/\/[^"]+\/fonts\/)"/g)].map((m) => m[1]);
-  const pattern = new RegExp('^' + kt.match(/FONT_FILE = Regex\("([^"]+)"\)/)[1].replace(/\\\\/g, '\\') + '$');
-  const wanted = Object.values(PACKS).flatMap((p) => SOURCES.map((s) => s(p.file)));
-  const refused = wanted.filter((u) => { const b = bases.find((x) => u.startsWith(x)); return !b || !pattern.test(u.slice(b.length)); });
-  assert.deepEqual({ refused, strangerAllowed: pattern.test('../../etc/passwd') || pattern.test('evil.js') }, { refused: [], strangerAllowed: false },
-    `Android would refuse ${JSON.stringify(refused)} (it allows ${JSON.stringify(bases)} with ${pattern})`);
-  assert.match(kt, /"fonts:download"|downloadFont/, 'MainActivity has no font downloader');
-  const bridge = fs.readFileSync(require.resolve('../android/app/src/main/java/com/gazboard/app/NativeBridge.kt'), 'utf8');
-  assert.match(bridge, /"fonts:download" -> activity\.downloadFont/, 'the bridge does not route fonts:download to the downloader');
+  const origins = [...new Set(Object.values(PACKS).flatMap((p) => SOURCES.map((s) => new URL(s(p.file)).origin)))];
+  for (const origin of origins) {
+    assert.ok(connectSrc.includes(origin), `CSP connect-src (${connectSrc}) is missing font origin ${origin}`);
+  }
+  assert.equal(/\*/.test(connectSrc), false, 'CSP connect-src must not open wildcard network access');
+  const adapterSrc = fs.readFileSync(require.resolve('../src/js/platform/android-adapter.js'), 'utf8');
+  assert.match(adapterSrc, /'fonts:download'/, 'android-adapter must keep fonts:download bridge route');
 });
 
 test('On Android, "Add a font file" opens the phone\'s own picker, since a WebView ignores a file input', () => {

@@ -129,6 +129,7 @@ export class AudioBar {
 
     this.startClock();
     this.syncUI();
+    this.app?.updateHudLayout?.('audioBar');
   }
 
   setWaveformBuffer(buf) {
@@ -150,6 +151,7 @@ export class AudioBar {
       this.app.surface._ink = null;
       this.app.surface.invalidate();
     }
+    this.app?.updateHudLayout?.();
   }
 
   toggle(track) {
@@ -411,7 +413,7 @@ export class AudioBar {
 
     const menu = h('div', {
       id: 'abTrackMenu',
-      style: 'position:fixed;z-index:9999;background:var(--surface,#1f2328);color:var(--text,#ffffff);border:1px solid var(--line,rgba(255,255,255,0.18));border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.38);padding:6px;min-width:210px;max-width:min(280px,calc(100vw - 20px));overflow-y:auto;display:flex;flex-direction:column;gap:4px;user-select:none;'
+      style: 'position:fixed;z-index:var(--z-popover, 45);background:var(--surface,#1f2328);color:var(--text,#ffffff);border:1px solid var(--line,rgba(255,255,255,0.18));border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.38);padding:6px;min-width:210px;max-width:min(280px,calc(100vw - 20px));overflow-y:auto;display:flex;flex-direction:column;gap:4px;user-select:none;'
     });
 
     let dismiss = null;
@@ -809,7 +811,7 @@ export class AudioBar {
     this.el = h('div', {
       id: 'audioBar',
       class: 'audio-bar-hud',
-      style: 'position:absolute;z-index:1000;display:flex;align-items:center;gap:8px;padding:6px 14px;background:var(--surface,#ffffff);color:var(--text,#111111);border:1px solid var(--line,rgba(0,0,0,0.15));border-radius:24px;box-shadow:0 4px 16px rgba(0,0,0,0.18);user-select:none;font-size:13px;font-family:inherit;'
+      style: 'position:absolute;z-index:var(--z-hud-top, 24);display:flex;align-items:center;gap:8px;padding:6px 14px;background:var(--surface,#ffffff);color:var(--text,#111111);border:1px solid var(--line,rgba(0,0,0,0.15));border-radius:24px;box-shadow:0 4px 16px rgba(0,0,0,0.18);user-select:none;font-size:13px;font-family:inherit;'
     }, dragHandle, this.btnSession, this.btnRewind10, this.btnSkipStep, this.btnPlay, this.btnForward10, this.lblTime, scrubberWrap, this.btnSpeed, this.btnBookmark, this.btnGhost, this.btnSync, this.btnFollow, this.cameraMode, this.outlineEffect, this.outlineColor, this.btnClose);
 
     this.wireDragging(dragHandle);
@@ -870,7 +872,18 @@ export class AudioBar {
     const ew = this.el.offsetWidth || 440;
     const eh = this.el.offsetHeight || 40;
 
-    this.box.x = Math.max(10, Math.min(hw - ew - 10, this.box.x));
+    let minLeft = 10;
+    let maxRightOffset = 10;
+    if (typeof document !== 'undefined' && document.body) {
+      if (document.body.classList.contains('left-drawer-open')) {
+        minLeft = document.getElementById('pagestrip')?.classList?.contains('show') ? 168 : 368;
+      }
+      if (document.body.classList.contains('right-drawer-open')) {
+        maxRightOffset = 376;
+      }
+    }
+    const maxLeft = Math.max(minLeft, hw - ew - maxRightOffset);
+    this.box.x = Math.max(minLeft, Math.min(maxLeft, this.box.x));
     this.box.y = Math.max(10, Math.min(hh - eh - 10, this.box.y));
 
     this.el.style.left = `${this.box.x}px`;

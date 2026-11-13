@@ -55,9 +55,11 @@ export class PageStrip {
   get possible() { return this.app.pageCount > 0 && !this.app.presenting; }
 
   toggle(on = !this.open) {
-    this.app.settings.pageStrip = !!on;
+    const want = !!on;
+    this.app.settings.pageStrip = want;
     this.app.saveSettings();
     this.sync();
+    this.app?.updateHudLayout?.(want ? 'pagestrip' : '');
   }
 
   ensure() {

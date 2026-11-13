@@ -192,7 +192,7 @@ export class PropertiesDialog {
 
     this.el = h('div', {
       id: 'propertiesModal',
-      style: 'position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.4);backdrop-filter:blur(4px);display:none;align-items:flex-start;justify-content:center;padding-top:12vh;'
+      style: 'position:fixed;inset:0;z-index:var(--z-modal, 60);background:rgba(0,0,0,0.4);backdrop-filter:blur(4px);display:none;align-items:flex-start;justify-content:center;padding-top:12vh;'
     }, card);
 
     this.el.addEventListener('click', (e) => {

@@ -228,6 +228,18 @@
   * `src/js/ui/split-workspace.js` -> `refreshBoardList`, `scrollLeftToRef`, `renderExcerptsDock`
   * `src-tauri/src/clipboard.rs`, `src-tauri/src/storage.rs`, `src-tauri/src/lib.rs`, `src-tauri/tauri.conf.json` -> `clipboard_read`, `clipboard_write`, `boards_list_blocking`, `configure_webview2_permissions`, `useHttpsScheme`
 
+### [FEATURE: Workflow-Studio-Material3-Glassmorphism-And-Hide-Protocols] | Aliases: Workflow Studio, Material 3, Glassmorphism, hide elements, zen mode, protocol switches, HUD zero-overlap, Rust JS parity
+> **1-Line Summary:** Collapsible `WorkflowStudio` drawer with live Glassmorphism/Material 3 switching (`html[data-ui-style]`), unified configuration for Obsidian/Markdown, Page Bounds (`doc.pageClip`), Video Bookmarks, and Audio/Replay Sync, plus non-overlapping `--z-*` HUD layout, manual element hiding (`hiddenManual`), Zen mode (`Alt+Z`), 8 HUD toggles, 4 subsystem protocol gates, and complete Rust-to-JS/Web/Android fallback parity.
+* **User Intention (Non-Negotiable):** Ensure every interactive control, drawer, audio bar, and floating status pill has deterministic clearance with zero accidental overlap; provide one discoverable toggleable visual studio for Material 3 vs. Glassmorphism and workflow modes; allow users to hide individual canvas items (`Ctrl+H`) or HUD chrome (`Alt+Z` / per-HUD chips) and disable background protocols cleanly; and ensure zero "Rust-only" dead-end commands on Web/PWA or Android.
+* **Visual / UI Behavior:** Unified `--z-*` layering keeps drawers (`--z-drawer`), floating pills (`#replayBar`, `#backPill`, `#viewPill`, `#hiddenPill`, `#zenPill`), and modals (`--z-modal`) strictly ordered without overlap; `#pagetab` offsets or yields to left drawers; manually hidden objects stay hidden even when a parent cover (`Study Tape` / `Answer Cover`) toggles conceal; and hidden items restore selectively or globally from `WorkflowStudio` or `#hiddenPill`.
+* **Code Anchors (Grep Targets):**
+  * `src/js/ui/workflow-studio.js` -> `WorkflowStudio`, `HUD_TOGGLES`, `PROTOCOL_TOGGLES`
+  * `src/js/app.js` -> `App.toggleWorkflowStudio`, `App.updateHudLayout`, `App.applyTheme`, `App.applyHudPreferences`, `App.setZenMode`, `App.applyProtocolPreferences`, `App.hideSelectedObjects`, `App.unhideObject`, `App.unhideAllObjects`, `App.syncHiddenPill`, `App.smoothSelectedStrokes`, `App.invertSelectedInkContrast`, `App.indexBoardMetadataInBackground`, `App.setCovers`
+  * `src/js/ui/study-runner.js`, `src/js/ui/panels.js`, `src/js/ui/sidebar-ribbon.js`, `src/js/ui/audio-bar.js`, `src/js/core/tools.js` -> `StudyRunner.setReviewState`, `Panels.open`, `AudioBar.place`, `Interaction.visibleArea`
+  * `src/js/platform/native-fallbacks.js`, `src/js/importers/pdf.js`, `src/js/export.js`, `src/js/core/markdown.js`, `src/js/ui/graph-view.js` -> `attachNativeFallbacks`, `fallbackFitStroke`, `openPdf.extractText`, `exportHighResPngNative`, `exportWorkspaceBundle`, `importWorkspaceBundle`, `renderMarkdownToHtmlNative`, `GraphView.open`
+  * `src/css/app.css` -> `--z-canvas`..`--z-modal`, `html[data-ui-style]`, `.stage-floating-pill`, `#workflowStudioSheet`, `body.zen-mode`
+  * `test/workflow-ui-parity.test.mjs`, `test/smoke-new-features.js` -> `workflowStudioAndParity`
+
 ## 3. Planned Features & App-Merge Wishlist
 
 ### [WISHLIST: Pane-Aware-Command-Dispatcher] | Aliases: pane commands, Delete routing, Copy routing
@@ -242,9 +254,9 @@
 
 ## 4. Canonical References & Live Verification
 * **Core Documentation Suite:** `docs/PRODUCT.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS_AND_TRAPS.md`, `docs/releases/ANDROID_READINESS.md`
-* **Active Verification Suite:** `node scripts/smoke.js` (25/25 passing)
-* **Internationalization Suite:** `node scripts/i18n-check.js` (2,449/2,449 across 7 locales)
-* **Android Platform Suite:** `node --test test/android-*.test.js` (82/82 passing)
+* **Active Verification Suite:** `node scripts/smoke.js` (26/26 passing)
+* **Internationalization Suite:** `node scripts/i18n-check.js` (2,535/2,535 across 7 locales)
+* **Node Unit, Tablet, Web & Sync Suites:** `node --test test/*.mjs test/android-*.test.js` (224/224 passing), `npm run test:web` (150/150 passing), `npm run test:tablet` (18/18 passing), `node test/sync.test.js` (169/169 passing), `node test/android-board-export.test.js` (3/3 passing)
 * **Tauri 2 Rust Native Port:** `src-tauri/` (Tauri 2.1 native host with custom `app://board/` protocol, crash-safe `<id>.json` storage, SHA-256 assets, Axum sync, Windows portable/NSIS/MSI, and v2/v3 signed Android ARM64 APK via `tauri-android` workflow)
 * **Core Data Schemas & State:** `src/js/core/store.js` (`Store`, `doc.objects`, `doc.pages`, `doc.audioTracks`)
 * **Platform & Packaging:** `main.js`, `preload.js`, `package.json`, `.github/workflows/tauri-release.yml`, `.github/workflows/tauri-android.yml`

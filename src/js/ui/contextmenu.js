@@ -113,12 +113,22 @@ export function showContextMenu(app, e, fromSelectionBar = false) {
     menu.appendChild(h('div', { class: 'menu-sep' }));
     const locked = [...app.surface.selection].every((id) => app.store.get(id)?.locked);
     menu.appendChild(item(locked ? t('Unlock') : t('Lock'), locked ? 'unlock' : 'lock', () => app.command('edit.lock')));
+    menu.appendChild(item(t('Hide'), 'eyeOff', () => app.command('edit.hide'), { key: 'Ctrl+H' }));
+    if (app.selected.some((o) => o.type === 'stroke' && o.points?.length >= 3)) {
+      menu.appendChild(item(t('Smooth stroke curve'), 'pen', () => app.command('edit.smoothStrokes')));
+    }
+    if (app.selected.some((o) => ['stroke', 'text', 'note', 'shape'].includes(o.type))) {
+      menu.appendChild(item(t('Optimize contrast for paper'), 'palette', () => app.command('edit.invertContrast')));
+    }
     menu.appendChild(item(t('Export selection as PNG…'), 'image', () => app.command('export.pngSelection')));
     menu.appendChild(h('div', { class: 'menu-sep' }));
     menu.appendChild(item(t('Delete'), 'trash', () => app.command('edit.delete'), { key: 'Del', danger: true }));
   } else {
     menu.appendChild(item(t('Paste'), 'copy', () => app.pasteAt(wp), { key: 'Ctrl+V' }));
     menu.appendChild(item(t('Select all'), 'select', () => app.command('edit.selectAll'), { key: 'Ctrl+A' }));
+    if (app.store.objects.some((o) => o && o.hidden && o.hiddenManual)) {
+      menu.appendChild(item(t('Restore hidden elements'), 'eye', () => app.command('edit.unhideAll')));
+    }
     menu.appendChild(h('div', { class: 'menu-sep' }));
     menu.appendChild(item(t('Sticky note here'), 'note', () => app.addNoteAt(wp)));
     menu.appendChild(item(t('Text here'), 'text', () => app.addTextAt(wp)));
@@ -470,6 +480,7 @@ export function updateSelectionBar(app, targetObj = null) {
   bar.appendChild(mk(t('Duplicate (Ctrl+D)'), 'duplicate', () => app.command('edit.duplicate')));
   bar.appendChild(mk(t('Bring to front'), 'front', () => app.command('order.front')));
   bar.appendChild(mk(sel.every((o) => o.locked) ? t('Unlock') : t('Lock'), sel.every((o) => o.locked) ? 'unlock' : 'lock', () => app.command('edit.lock')));
+  bar.appendChild(mk(t('Hide (Ctrl+H)'), 'eyeOff', () => app.command('edit.hide')));
   bar.appendChild(mk(t('Delete (Del)'), 'trash', () => app.command('edit.delete')));
 
   appendMoreActions(app, bar);

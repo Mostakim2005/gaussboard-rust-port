@@ -390,3 +390,24 @@ flowchart LR
   * `src-tauri/src/vault.rs` -> `canonical_vault_root`, `resolve_safe_md_path`, `vault_list_notes`, `vault_read_note`, `vault_write_note`
   * `src-tauri/src/clipboard.rs` -> `decode_png_data_url_to_rgba`, `encode_rgba_to_png_data_url`, `clipboard_read`, `clipboard_write`
   * `src-tauri/src/lib.rs` -> `configure_webview2_permissions`
+
+### [SYSTEM: Zero-Overlap-HUD-WorkflowStudio-And-Protocol-Gates] | Aliases: WorkflowStudio, updateHudLayout, z-index tokens, Material 3, Glassmorphism, hiddenManual, Zen mode, native fallbacks
+> **1-Line Summary:** Coordinates drawer/pill clearance through `App.updateHudLayout` and `--z-*` CSS tokens, exposes Material 3 / Glassmorphism styling and the four user workflow controls in `WorkflowStudio`, preserves `hiddenManual` across cover reveals, and guarantees parity across Tauri, Web/PWA, and Android via `native-fallbacks.js`.
+* **How It Works (Plain English):** Rather than letting drawers, left latches, `#pagetab`, `#audioBar`, and top-center pills compete via ad-hoc `z-index: 9999` values, `App.updateHudLayout()` computes live body state classes (`left-drawer-open`, `right-drawer-open`, `studio-open`, `replay-bar-open`, `audio-bar-open`, `back-pill-open`, `view-pill-open`, `hidden-pill-open`) so `src/css/app.css` stacks and shifts regions deterministically and `Interaction.visibleArea()` punches viewport exclusion holes for visible HUD elements. `WorkflowStudio` (`#workflowStudioSheet`) edits settings live and triggers `App.applyTheme()`, `App.applyHudPreferences()`, `App.applyProtocolPreferences()`, and `App.unhideObject()`. On Web/PWA and Android where Tauri Rust commands do not run, `attachNativeFallbacks()` provides API-aligned implementations (`search`, `geometry`, `colorimetry`, `markdown`, `export`, `archive`, `power`, `window`) using identical parameter shapes.
+* **Architecture Diagram:**
+```mermaid
+flowchart TD
+    WS["WorkflowStudio (#workflowStudioSheet)"] -->|uiStyle| Theme["App.applyTheme -> html[data-ui-style] + applyMica"]
+    WS -->|hudHide* / zenMode| HudPref["App.applyHudPreferences -> body.hud-hide-* / body.zen-mode"]
+    WS -->|enable*Protocol| Proto["App.applyProtocolPreferences (Obsidian / LAN / Audio / SRS)"]
+    WS -->|unhide / unhideAll| Hide["hiddenManual guard in App.setCovers & StudyRunner.setReviewState"]
+
+    Drawers["Panels / SidebarRibbon / WorkflowStudio / AudioBar / Pills"] --> Layout["App.updateHudLayout() + --z-* tokens"]
+    Layout --> Clear["Zero-Overlap CSS clearance + Interaction.visibleArea() holes"]
+    Tauri["tauri-board.js (Rust IPC)"] <-->|Param-aligned contract| Fallbacks["native-fallbacks.js (Web / Android parity)"]
+```
+* **Code Anchors (Grep Targets):**
+  * `src/js/ui/workflow-studio.js` -> `WorkflowStudio.open`, `WorkflowStudio.render`, `WorkflowStudio._refreshContrastBadge`
+  * `src/js/app.js` -> `App.updateHudLayout`, `App.applyTheme`, `App.applyHudPreferences`, `App.applyProtocolPreferences`, `App.hideSelectedObjects`, `App.unhideAllObjects`, `App.setCovers`
+  * `src/js/ui/panels.js`, `src/js/ui/sidebar-ribbon.js`, `src/js/ui/audio-bar.js`, `src/js/core/tools.js` -> `Panels.open`, `AudioBar.place`, `Interaction.visibleArea`
+  * `src/js/platform/native-fallbacks.js`, `src/js/platform/tauri-board.js` -> `attachNativeFallbacks`, `fallbackFitStroke`, `initTauriBridge`

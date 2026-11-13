@@ -343,8 +343,33 @@ export async function insertDocument(app, filePath, opts = {}) {
         rendered.push(await doc.render(pages[i], opts.quality ?? app.settings.importQuality ?? 2));
       }
     }
+    const boardId = app.store?.doc?.id || assetId || name;
+    const pageTexts = [];
+    if (window.board?.search && typeof doc.extractText === 'function') {
+      for (let i = 0; i < pages.length && i < 40; i++) {
+        try {
+          const text = await doc.extractText(pages[i]);
+          if (text) pageTexts.push({ pageNo: pages[i], text });
+        } catch {}
+      }
+    }
     await doc.destroy();
     doc = null;
+    if (pageTexts.length && window.board?.search?.indexBoard) {
+      Promise.resolve().then(async () => {
+        for (const item of pageTexts) {
+          await window.board.search.indexBoard(
+            `${boardId}#page=${item.pageNo}`,
+            `${name} (Page ${item.pageNo})`,
+            item.text,
+            'pdf,attachment'
+          ).catch(() => {});
+        }
+      });
+    }
+    if (isDirectPdf && filePath && window.board?.search?.indexPdf) {
+      window.board.search.indexPdf(boardId, name, filePath, 'pdf').catch(() => {});
+    }
 
     const { objs, pages: padPages, focus } = layoutPages(app, rendered, {
       name, layout, multiPage: total > 1,

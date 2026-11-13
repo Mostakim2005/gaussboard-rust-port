@@ -903,4 +903,123 @@ export async function openBoardFile(app, opts = {}) {
   return true;
 }
 
+function parseHexRgba(hex, opacity = 1) {
+  let clean = String(hex || '#201f1e').trim().replace(/^#/, '');
+  if (clean.length === 3) clean = clean.split('').map((c) => c + c).join('');
+  const a = Math.max(0, Math.min(255, Math.round((opacity ?? 1) * 255)));
+  if (!/^[0-9a-fA-F]{6}$/.test(clean)) return [32, 31, 30, a];
+  return [
+    parseInt(clean.slice(0, 2), 16),
+    parseInt(clean.slice(2, 4), 16),
+    parseInt(clean.slice(4, 6), 16),
+    a
+  ];
+}
+
+/**
+ * High-resolution PNG export powered by Rust tiny-skia strip tiling on pure-ink boards
+ * (keeps peak RAM near ~32 MB up to 16K), falling back to Canvas2D for mixed media or Web/Android.
+ */
+export async function exportHighResPngNative(app, { scale = 3, selectionOnly = false, filePath: givenPath = null } = {}) {
+  const objects = (selectionOnly && app.surface?.selection?.size)
+    ? app.selected
+    : (app.store?.objects || []);
+  const visible = objects.filter((o) => o && !o.hidden);
+  const pureStrokesOnly = visible.length > 0 && visible.every((o) => o.type === 'stroke' && o.points?.length >= 2);
+  const nativeFn = typeof window !== 'undefined' ? window.board?.export?.exportHighResPng : null;
+  const bgHex = String(app.store?.doc?.background?.color || '#ffffff').toLowerCase();
+  const isLightPaper = bgHex === '#ffffff' || bgHex === '#fff' || bgHex === 'white';
+
+  if (typeof nativeFn === 'function' && pureStrokesOnly && isLightPaper) {
+    const box = (selectionOnly && app.surface?.selection?.size)
+      ? (() => { const b = app.surface.selectionBounds(); return { x: b.x - 24, y: b.y - 24, w: b.w + 48, h: b.h + 48 }; })()
+      : exportBounds(app);
+    const maxPx = 16384;
+    const s = Math.min(scale, maxPx / Math.max(1, box.w, box.h));
+    const fullW = Math.max(1, Math.min(maxPx, Math.round(box.w * s)));
+    const fullH = Math.max(1, Math.min(maxPx, Math.round(box.h * s)));
+    const filePath = givenPath || await window.board.saveDialog({
+      title: t('Export High-Res PNG (Rust 16K Tiled)'),
+      defaultPath: `${safeName(app.store?.doc?.name)}-hi-res.png`,
+      filters: [{ name: t('PNG image'), extensions: ['png'] }]
+    });
+    if (!filePath) return null;
+    const strokes = visible.map((o) => {
+      let minY = Infinity, maxY = -Infinity;
+      const pts = [];
+      for (const p of o.points) {
+        const x = p.x - box.x;
+        const y = p.y - box.y;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        pts.push([x, y]);
+      }
+      return {
+        min_y: minY,
+        max_y: maxY,
+        points: pts,
+        rgba: parseHexRgba(o.color, o.tool === 'highlighter' ? 0.45 : (o.opacity ?? 1)),
+        width: Number(o.width) || 3
+      };
+    });
+    try {
+      const ok = await nativeFn(filePath, fullW, fullH, s, strokes);
+      if (ok) {
+        app.toast(t('Exported {name}', { name: filePath.split(/[\\/]/).pop() }));
+        return filePath;
+      }
+    } catch {}
+    return exportPng(app, { scale: s, selectionOnly, filePath });
+  }
+
+  return exportPng(app, { scale, selectionOnly, filePath: givenPath });
+}
+
+/** Export workspace bundle (Zstd archive on Tauri desktop, or JS multi-board zip fallback). */
+export async function exportWorkspaceBundle(app) {
+  const archive = typeof window !== 'undefined' ? window.board?.archive : null;
+  const storageInfo = await window.board?.storage?.get?.().catch(() => null);
+  if (archive?.exportBundle && storageInfo?.boardsDir && !archive.exportBundle.unsupported) {
+    const destPath = await window.board.saveDialog({
+      title: t('Export Workspace Archive (.zip)'),
+      defaultPath: `${safeName(app.store?.doc?.name || 'GaussBoard')}-workspace.zip`,
+      filters: [{ name: t('ZIP archive'), extensions: ['zip'] }]
+    });
+    if (!destPath) return null;
+    const res = await archive.exportBundle(storageInfo.boardsDir, destPath, true);
+    if (res && !res.unsupported && res.archive_path) {
+      app.toast(t('Exported workspace archive ({sha})', { sha: String(res.sha256 || '').slice(0, 8) }), 'check');
+      return res;
+    }
+  }
+  const { exportBoards } = await import('./board-export.js');
+  const id = app.store?.doc?.id;
+  return id ? exportBoards(app, [id]) : saveBoardFile(app);
+}
+
+/** Import workspace bundle (verified ZipSlip-safe extraction on Tauri desktop, or JS zip fallback). */
+export async function importWorkspaceBundle(app) {
+  const archive = typeof window !== 'undefined' ? window.board?.archive : null;
+  const storageInfo = await window.board?.storage?.get?.().catch(() => null);
+  const paths = await window.board?.openDialog?.({
+    title: t('Import Workspace Archive (.zip / .gaussboard)'),
+    filters: [{ name: t('GaussBoard archives'), extensions: ['zip', 'gaussboard', 'gazboard', 'json'] }]
+  });
+  if (!paths || !paths.length) return null;
+  const filePath = paths[0];
+  if (/\.zip$/i.test(filePath) && archive?.importBundle && storageInfo?.boardsDir) {
+    const res = await archive.importBundle(filePath, storageInfo.boardsDir);
+    if (res && !res.unsupported) {
+      await app.refreshBoardDirectory?.();
+      app.toast(t('Imported workspace archive ({n} files)', { n: res.files_count || 0 }), 'check');
+      return res;
+    }
+  }
+  const buf = await window.board.readFile(filePath);
+  const { importBoards } = await import('./board-export.js');
+  const imported = await importBoards(app, buf);
+  app.toast(t('Imported {n} board(s)', { n: imported.length }), 'check');
+  return imported;
+}
+
 export const safeName = (n) => String(n || 'board').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80).trim() || 'board';

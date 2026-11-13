@@ -69,6 +69,19 @@ export async function openPdf(data) {
       return canvas.toDataURL('image/jpeg', 0.72);
     },
 
+    async extractText(pageNo) {
+      const page = await pdf.getPage(pageNo);
+      try {
+        if (typeof page.getTextContent !== 'function') return '';
+        const tc = await page.getTextContent();
+        return (tc?.items || []).map((it) => it?.str || '').join(' ').replace(/\s+/g, ' ').trim();
+      } catch {
+        return '';
+      } finally {
+        page.cleanup?.();
+      }
+    },
+
     destroy() { return pdf.destroy(); }
   };
 }

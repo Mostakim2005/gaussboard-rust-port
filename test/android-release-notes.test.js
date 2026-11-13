@@ -74,20 +74,20 @@ function wrappedLines(md) {
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'gb-notes-'));
 
 test('desktop: every platform that attaches files to the release takes its text from release-notes/<version>.md', () => {
-  const yml = read('.github/workflows/release.yml');
-  const attaches = yml.split('- name: Attach to the GitHub Release').slice(1).map((s) => s.split('\n      - name:')[0]);
-  assert.equal(attaches.length, 1, `expected Windows alone to attach to the release, found ${attaches.length}`);
+  const yml = read('.github/workflows/tauri-release.yml');
+  const attaches = yml.split('- name: Attach branch binaries to GitHub Release').slice(1).map((s) => s.split('\n      - name:')[0]);
+  assert.equal(attaches.length, 1, `expected Windows build job to attach to the release, found ${attaches.length}`);
   attaches.forEach((a, i) => {
     assert.match(a, /body_path: \$\{\{ steps\.notes\.outputs\.path \}\}/, `attach step ${i + 1} does not read the notes file:\n${a}`);
     assert.match(a, /generate_release_notes: \$\{\{ steps\.notes\.outputs\.generate == 'true' \}\}/, `attach step ${i + 1} still always generates notes:\n${a}`);
   });
   assert.equal(runBlocks(yml, 'Find the release notes for this version').length, 1,
-    'the one attaching job needs its own "Find the release notes" step - jobs do not share steps');
+    'the attaching job needs its own "Find the release notes for this version" step');
 });
 
 test('desktop: the notes step points at the file when it exists, and falls back to GitHub\'s list when it does not', (t) => {
   if (!BASH) { t.skip(noBash()); return; }
-  const script = runBlocks(read('.github/workflows/release.yml'), 'Find the release notes for this version')[0];
+  const script = runBlocks(read('.github/workflows/tauri-release.yml'), 'Find the release notes for this version')[0];
   const dir = scratch();
   fs.mkdirSync(path.join(dir, 'release-notes'));
   fs.writeFileSync(path.join(dir, 'release-notes', '9.9.9.md'), 'Hello.\n');
@@ -105,26 +105,25 @@ test('desktop: the notes step points at the file when it exists, and falls back 
   assert.match(missing, /generate=true/, `with no file it should fall back to generated notes:\n${missing}`);
 });
 
-test('android: the release text is the same release-notes file plus install notes, every paragraph on one line', (t) => {
+test('android: the release workflow attaches release-notes/<version>.md and builds signed aarch64 APKs', (t) => {
+  const yml = read('.github/workflows/tauri-android.yml');
+  assert.match(yml, /tauri android build -- --apk --target aarch64/, 'tauri-android.yml must build signed aarch64 APKs');
+  const attaches = yml.split('- name: Attach signed APK to GitHub Release').slice(1).map((s) => s.split('\n      - name:')[0]);
+  assert.equal(attaches.length, 1, `expected Android workflow to attach to the release once, found ${attaches.length}`);
+  assert.match(attaches[0], /body_path: \$\{\{ steps\.notes\.outputs\.path \}\}/, `Android attach step does not read the notes file:\n${attaches[0]}`);
+  assert.match(attaches[0], /generate_release_notes: \$\{\{ steps\.notes\.outputs\.generate == 'true' \}\}/, `Android attach step does not fall back to generated notes`);
   if (!BASH) { t.skip(noBash()); return; }
-  const yml = read('.github/workflows/android-release.yml');
-  const [publish] = runBlocks(yml, 'Publish the release');
-  assert.ok(publish, 'could not find the "Publish the release" step');
-  // run the step up to the point where it would publish, then show what it wrote
-  const upTo = publish.split('gh release create')[0] + '\ncat "$NOTES"\n';
+  const script = runBlocks(yml, 'Find the release notes for this version')[0];
+  assert.ok(script, 'tauri-android.yml is missing Find the release notes for this version step');
   const dir = scratch();
   fs.mkdirSync(path.join(dir, 'release-notes'));
-  const ours = '## What\'s Changed\n\n**Something new:** a whole paragraph that is long enough to have been wrapped by hand if anybody had done it.\n';
-  fs.writeFileSync(path.join(dir, 'release-notes', '9.9.9.md'), ours);
-  const run = (version) => execFileSync(BASH, ['-c', upTo], { cwd: dir, env: { ...process.env, VERSION: version, BUILD: '1' }, stdio: ['ignore', 'pipe', 'pipe'] }).toString().replace(/\r\n/g, '\n');
-  const text = run('9.9.9');
-  assert.ok(text.startsWith(ours), `the release-notes file should come first, as written. Got:\n${text.slice(0, 400)}`);
-  assert.match(text, /## Install/, `the install notes are missing:\n${text}`);
-  assert.match(text, /GazBoard for Android 9\.9\.9 \(build 1\)/, `the version and build are not filled in:\n${text}`);
-  const wrapped = wrappedLines(text);
-  assert.deepEqual(wrapped, [], `paragraphs broken across lines show up squashed on the release page:\n${wrapped.join('\n')}`);
-  const without = run('1.0.0');
-  assert.match(without, /## Install/, `with no notes file the install notes must still go out:\n${without}`);
+  fs.writeFileSync(path.join(dir, 'release-notes', '9.9.9.md'), '# Release 9.9.9\n\nSingle line paragraph.\n');
+  const out = 'out-android';
+  fs.writeFileSync(path.join(dir, out), '');
+  execFileSync(BASH, ['-c', script], { cwd: dir, env: { ...process.env, GITHUB_REF_NAME: 'v9.9.9', GITHUB_OUTPUT: out }, stdio: 'pipe' });
+  const result = fs.readFileSync(path.join(dir, out), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(result, /path=release-notes\/9\.9\.9\.md/, `Android notes lookup failed:\n${result}`);
+  assert.match(result, /generate=false/);
 });
 
 test('every release-notes file keeps each paragraph on one line', () => {

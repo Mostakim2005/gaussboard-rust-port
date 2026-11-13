@@ -34,7 +34,9 @@ export class StudyRunner {
     const o = card?.object;
     if (!o) return;
     o.revealed = revealed;
-    for (const w of this.app.onCovers?.([o.id]) || []) w.hidden = revealed;
+    for (const w of this.app.onCovers?.([o.id]) || []) {
+      if (!w.hiddenManual) w.hidden = revealed;
+    }
   }
 
   /** In-place state changed: move the frozen-scene key, then repaint. */
@@ -301,6 +303,20 @@ export class StudyRunner {
     // `item.object.fsrs` first would make the store record the new value as
     // its own "before" state, so undo could never put the old schedule back.
     this.app.store?.update?.(item.object.id, { fsrs: newCard }, 'rate card fsrs');
+
+    if (this.app.settings?.enableStudySrsProtocol !== false) {
+      const dueMs = newCard.due instanceof Date ? newCard.due.getTime() : (Number(newCard.due) || Date.now());
+      const intervalDays = Math.max(0, (dueMs - Date.now()) / 86400000);
+      const prompt = item.object.text || item.object.note || `Occlusion (${item.object.subtype || 'tape'})`;
+      window.board?.search?.scheduleSrsCard?.(
+        item.object.id,
+        this.app.store?.doc?.id || '',
+        String(prompt).slice(0, 240),
+        intervalDays,
+        Number(newCard.stability) || 0,
+        Number(newCard.difficulty) || 0
+      )?.catch?.(() => {});
+    }
 
     // Advance to next card
     this.loadCard(this.currentIndex + 1);

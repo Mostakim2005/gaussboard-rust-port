@@ -13,14 +13,18 @@ export class SearchDialog {
     this.boardsContainer = null;
     this.toolsContainer = null;
     this.settingsContainer = null;
+    this.nativeSearchContainer = null;
     this.secBoards = null;
+    this.secNative = null;
     this.secTools = null;
     this.secSettings = null;
     this.secDivider = null;
+    this.secNativeDivider = null;
     this.secToolsDivider = null;
     this.emptyNotice = null;
     this.visible = false;
     this.boardsList = [];
+    this._nativeSeq = 0;
   }
 
   async loadBoards() {
@@ -92,6 +96,17 @@ export class SearchDialog {
       this.settingsContainer
     );
 
+    // Section 1b: Full-Text Content, PDFs & Audio-to-Ink (Native FTS / Fallback Index)
+    this.nativeSearchContainer = h('div', { class: 'search-section-native' });
+    this.secNative = h('div', { style: 'margin-top:4px;display:none;' },
+      h('div', { style: 'font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-2,rgba(128,128,128,0.85));margin-bottom:8px;' }, t('Indexed Content, PDF & Audio Ink')),
+      this.nativeSearchContainer
+    );
+    this.secNativeDivider = h('div', {
+      class: 'search-section-divider',
+      style: 'height:1px;background:var(--line,rgba(0,0,0,0.08));margin:16px 0;display:none;'
+    });
+
     // Empty state notice
     this.emptyNotice = h('div', {
       style: 'display:none;padding:32px 16px;text-align:center;font-size:13.5px;color:var(--text-2,rgba(128,128,128,0.8));font-style:italic;'
@@ -100,7 +115,7 @@ export class SearchDialog {
     const scrollArea = h('div', {
       class: 'omni-search-scroll',
       style: 'overflow-y:auto;flex:1;padding-right:4px;margin-top:4px;display:flex;flex-direction:column;'
-    }, this.secBoards, this.secDivider, this.secTools, this.secToolsDivider, this.secSettings, this.emptyNotice);
+    }, this.secBoards, this.secDivider, this.secNative, this.secNativeDivider, this.secTools, this.secToolsDivider, this.secSettings, this.emptyNotice);
 
     const card = h('div', {
       class: 'omni-search-card',
@@ -110,7 +125,7 @@ export class SearchDialog {
     this.el = h('div', {
       id: 'omniSearchModal',
       class: 'omni-search-backdrop',
-      style: 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.45);backdrop-filter:blur(6px);display:none;align-items:flex-start;justify-content:center;padding-top:10vh;'
+      style: 'position:fixed;inset:0;z-index:var(--z-omnibar, 80);background:rgba(0,0,0,0.45);backdrop-filter:blur(6px);display:none;align-items:flex-start;justify-content:center;padding-top:10vh;'
     }, card);
 
     this.el.addEventListener('click', (e) => {
@@ -153,20 +168,114 @@ export class SearchDialog {
     const settingCount = this.renderSettings(q);
 
     const total = boardCount + toolCount + settingCount;
-    if (total === 0) {
+    if (total === 0 && q.length < 2) {
       if (this.secBoards) this.secBoards.style.display = 'none';
       if (this.secDivider) this.secDivider.style.display = 'none';
+      if (this.secNative) this.secNative.style.display = 'none';
+      if (this.secNativeDivider) this.secNativeDivider.style.display = 'none';
       if (this.secTools) this.secTools.style.display = 'none';
       if (this.secToolsDivider) this.secToolsDivider.style.display = 'none';
       if (this.secSettings) this.secSettings.style.display = 'none';
       if (this.emptyNotice) this.emptyNotice.style.display = 'block';
     } else {
-      if (this.emptyNotice) this.emptyNotice.style.display = 'none';
+      if (this.emptyNotice) this.emptyNotice.style.display = total === 0 ? 'block' : 'none';
       if (this.secBoards) this.secBoards.style.display = boardCount > 0 ? 'block' : 'none';
       if (this.secDivider) this.secDivider.style.display = (boardCount > 0 && (toolCount > 0 || settingCount > 0)) ? 'block' : 'none';
       if (this.secTools) this.secTools.style.display = toolCount > 0 ? 'block' : 'none';
       if (this.secToolsDivider) this.secToolsDivider.style.display = (toolCount > 0 && settingCount > 0) ? 'block' : 'none';
       if (this.secSettings) this.secSettings.style.display = settingCount > 0 ? 'block' : 'none';
+    }
+    this.renderNativeResults(q, total);
+  }
+
+  async renderNativeResults(q, syncTotal = 0) {
+    if (!this.nativeSearchContainer || !this.secNative) return;
+    const seq = ++this._nativeSeq;
+    this.nativeSearchContainer.innerHTML = '';
+    if (!q || q.length < 2 || !window.board?.search) {
+      this.secNative.style.display = 'none';
+      if (this.secNativeDivider) this.secNativeDivider.style.display = 'none';
+      return;
+    }
+
+    let textHits = [];
+    let audioHits = [];
+    try {
+      const [fts, aud] = await Promise.all([
+        window.board.search.query?.(q, 8).catch(() => []) || [],
+        window.board.search.searchAudioToInk?.(q, 6).catch(() => []) || []
+      ]);
+      if (Array.isArray(fts)) textHits = fts;
+      if (Array.isArray(aud)) audioHits = aud;
+    } catch {}
+    if (seq !== this._nativeSeq) return;
+
+    const count = textHits.length + audioHits.length;
+    if (!count) {
+      this.secNative.style.display = 'none';
+      if (this.secNativeDivider) this.secNativeDivider.style.display = 'none';
+      if (this.emptyNotice) this.emptyNotice.style.display = syncTotal === 0 ? 'block' : 'none';
+      return;
+    }
+
+    if (this.emptyNotice) this.emptyNotice.style.display = 'none';
+    this.secNative.style.display = 'block';
+    if (this.secNativeDivider) this.secNativeDivider.style.display = 'block';
+
+    for (const hit of textHits) {
+      const cleanSnippet = String(hit.snippet || '').replace(/<\/?b>/g, '');
+      const row = h('div', {
+        class: 'search-tool-row',
+        style: 'display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-radius:10px;cursor:pointer;margin-bottom:4px;gap:10px;'
+      },
+        h('div', { style: 'display:flex;flex-direction:column;gap:2px;min-width:0;' },
+          h('span', { style: 'font-weight:600;font-size:13px;' }, hit.title || hit.board_id),
+          cleanSnippet ? h('span', { style: 'font-size:11.5px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' }, cleanSnippet) : ''
+        ),
+        h('span', { class: 'badge' }, String(hit.board_id || '').includes('#page=') ? t('PDF') : t('Board'))
+      );
+      row.addEventListener('click', () => {
+        this.close();
+        const rawId = String(hit.board_id || '');
+        const [targetBoardId, frag] = rawId.split('#');
+        const openIt = async () => {
+          if (targetBoardId && targetBoardId !== this.app.store?.doc?.id) {
+            await this.app.openBoardById?.(targetBoardId);
+          }
+          if (frag && frag.startsWith('page=')) {
+            const p = Math.max(0, parseInt(frag.slice(5), 10) - 1);
+            if (!Number.isNaN(p)) this.app.goToPage?.(p);
+          }
+        };
+        openIt();
+      });
+      this.nativeSearchContainer.appendChild(row);
+    }
+
+    for (const ah of audioHits) {
+      const sec = Math.max(0, Math.round((Number(ah.audio_seek_ms) || 0) / 1000));
+      const mm = String(Math.floor(sec / 60)).padStart(2, '0');
+      const ss = String(sec % 60).padStart(2, '0');
+      const row = h('div', {
+        class: 'search-tool-row',
+        style: 'display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-radius:10px;cursor:pointer;margin-bottom:4px;gap:10px;'
+      },
+        h('div', { style: 'display:flex;flex-direction:column;gap:2px;min-width:0;' },
+          h('span', { style: 'font-weight:600;font-size:13px;' }, `${t('Audio-to-Ink')}: "${ah.matched_word}"`),
+          h('span', { style: 'font-size:11.5px;color:var(--text-2);' }, `${mm}:${ss}`)
+        ),
+        h('span', { class: 'badge' }, t('Jump'))
+      );
+      row.addEventListener('click', async () => {
+        this.close();
+        if (ah.board_id && ah.board_id !== this.app.store?.doc?.id) {
+          await this.app.openBoardById?.(ah.board_id);
+        }
+        if (this.app.replayEngine && ah.audio_seek_ms != null) {
+          this.app.replayEngine.seekTo?.(Number(ah.audio_seek_ms) || 0);
+        }
+      });
+      this.nativeSearchContainer.appendChild(row);
     }
   }
 

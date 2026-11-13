@@ -565,6 +565,17 @@ function wireTopBar(app) {
     });
   }
 
+  // Workflow Studio Button
+  const btnStudio = document.getElementById('btnWorkflowStudio');
+  if (btnStudio) {
+    btnStudio.title = t('Workflow Studio, UI Style & Hide Controls (Ctrl+Shift+O)');
+    const studioLbl = btnStudio.querySelector('span');
+    if (studioLbl) studioLbl.textContent = t('Studio');
+    btnStudio.addEventListener('click', () => {
+      app.toggleWorkflowStudio?.();
+    });
+  }
+
   // Top Bar Embedded Audio Record Button
   const btnTopRec = document.getElementById('btnTopRecord');
   const lblTopTime = document.getElementById('topRecTime');
@@ -2144,11 +2155,15 @@ export function openExportPopover(app, anchor) {
     menuItem(t('Export board as PNG…'), 'image', () => app.command('export.png')),
     menuItem(t('Export selection as PNG…'), 'image', () => app.command('export.pngSelection'), { disabled: !app.surface.selection.size }),
     menuItem(t('Export as PDF…'), 'doc', () => app.command('export.pdf')),
+    menuItem(t('Export High-Res PNG (16K)…'), 'image', () => app.command('export.highResPng')),
     menuItem(t('Export as SVG…'), 'export', () => app.command('export.svg')),
     menuItem(t('Export Video / Audio Replay (.mp4, .webm)…'), 'video', () => app.command('export.video')),
     menuItem(t('Export Obsidian Canvas (.canvas)…'), 'shapes', () => app.command('export.jsoncanvas')),
     menuItem(t('Export Markdown note (.md)…'), 'text', () => app.command('export.markdownSidecar')),
     menuItem(t('Fit everything onto the paper'), 'shapes', () => app.command('page.fitContent'), { disabled: !app.store.pageCount }),
+    h('div', { class: 'menu-sep' }),
+    menuItem(t('Export Workspace Archive (.zip)…'), 'export', () => app.command('export.bundle')),
+    menuItem(t('Import Workspace Archive (.zip)…'), 'board', () => app.command('import.bundle')),
     h('div', { class: 'menu-sep' }),
     menuItem(t('Save a copy (.gaussboard)…'), 'doc', () => app.command('board.save'), { key: 'Ctrl+S' }),
     menuItem(t('Open a board file…'), 'board', () => app.command('board.open'), { key: 'Ctrl+O' })

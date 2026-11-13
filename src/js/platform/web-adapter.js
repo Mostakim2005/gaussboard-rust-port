@@ -8,6 +8,7 @@ import * as updater from './update-manager.js';
 import { t } from '../i18n.js';
 import { boardAssetUrl } from '../core/util.js';
 import { browserClipboardWrite } from './web-clipboard.js';
+import { attachNativeFallbacks } from './native-fallbacks.js';
 
 const APP_VERSION = '__APP_VERSION__';
 updater.setAppVersion(APP_VERSION);
@@ -194,7 +195,7 @@ export function createWebAdapter() {
     }
   });
 
-  return {
+  return attachNativeFallbacks({
     info: async () => {
       const chromeMatch = /Chrome\/([\d.]+)/.exec(navigator.userAgent);
       return {
@@ -361,7 +362,7 @@ export function createWebAdapter() {
     // Hidden window converter hooks (no-op in browser)
     convertReady: () => {},
     convertError: () => {}
-  };
+  });
 }
 
 function emitMenu(id) {
