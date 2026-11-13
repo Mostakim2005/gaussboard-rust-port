@@ -580,3 +580,14 @@ flowchart LR
   * `src/js/ui/workflow-studio.js` -> `HUD_TOGGLES`, `PROTOCOL_TOGGLES`
   * `scripts/i18n-extract.js` -> `PROBLEMS`
 
+### [TRAP: Tauri-WebviewWindow-Desktop-Only-Unminimize-On-Android] | Aliases: splash.rs, unminimize, E0599, tauri-android, cfg(desktop)
+> **1-Line Summary:** `tauri::WebviewWindow::unminimize()` does not exist on Android (`#[cfg(mobile)]`) and breaks `aarch64-linux-android` compilation unless guarded with `#[cfg(desktop)]`.
+```mermaid
+flowchart LR
+    Unm["main_win.unminimize() unguarded"] -->|"tauri-android build"| Err["rustc E0599: no method unminimize on WebviewWindow"]
+    Guarded["#[cfg(desktop)] let _ = main_win.unminimize();"] -->|"Desktop + Android CI"| Ok["Both Windows & Android APK compile cleanly"]
+```
+* **Code Anchors (Grep Targets):**
+  * `src-tauri/src/splash.rs` -> `reveal_main_and_close_splash`
+  * `src-tauri/src/lib.rs` -> `run` (`#[cfg(desktop)]` window restore blocks)
+

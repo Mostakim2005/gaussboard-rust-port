@@ -1,7 +1,7 @@
 {
   "name": "gaussboard-rust-port",
   "productName": "GaussBoard",
-  "version": "7.0.2",
+  "version": "7.0.3",
   "description": "GaussBoard (Rust & Tauri v2 Port) — An offline digital whiteboard & STEM engineering workstation for electrical engineering students, powered by Rust native engines and Tauri v2.",
   "scripts": {
     "start": "tauri dev",

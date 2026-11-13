@@ -18,6 +18,7 @@ pub fn init_splash_bypass_and_watchdog<R: Runtime>(app: &AppHandle<R>) {
 
 pub fn reveal_main_and_close_splash<R: Runtime>(app: &AppHandle<R>) {
     if let Some(main_win) = app.get_webview_window("main") {
+        #[cfg(desktop)]
         let _ = main_win.unminimize();
         let _ = main_win.show();
         let _ = main_win.set_focus();
